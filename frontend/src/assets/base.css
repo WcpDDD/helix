@@ -1,0 +1,50 @@
+:root {
+  --ink: #1a1f1c;
+  --muted: #5c655f;
+  --line: #e4dfd4;
+  --paper: #f3f1ea;
+  --surface: #fffcf7;
+  --accent: #0f6e56;
+  --accent-soft: #e5f3ee;
+  --warn: #9a6700;
+  --warn-soft: #f8efd8;
+  --danger: #8d3a32;
+  --danger-soft: #f8e8e6;
+  color-scheme: light;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  color: var(--ink);
+  background: var(--paper);
+  font-family:
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Noto Sans SC',
+    'Segoe UI',
+    sans-serif;
+  line-height: 1.5;
+}
+
+button,
+input,
+textarea {
+  font: inherit;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
