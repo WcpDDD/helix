@@ -1,3 +1,6 @@
 .DS_Store
 .idea/
 *.iml
+backend/application-local.properties
+backend/helix.db
+backend/target/helix-test.db

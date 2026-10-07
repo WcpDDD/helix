@@ -1,0 +1,152 @@
+# 任务和 issue 的对应。这份文件在 workspace 里，是这份对应的来源。
+#
+# 一条任务恰好一张主 issue，任务编号就是这张 issue 的编号。
+# children 只写子 issue，按编号升序。主 issue 不出现在 children 里，也不是边的端点。
+# 没有写进任何 children 的 issue，自己就是一条任务。
+# edges 只连接同一条任务里的子 issue。from 是前置，to 是后继。
+# needs_contract 为 true 时要看一份规格。contract_ref 是相对仓库根的路径，还没有就省略这一键。
+# needs_contract 为 false 时，这条边只表示实现顺序，不写 contract_ref。
+version: 1
+tasks:
+  - main: 12
+    children:
+      - 40
+      - 41
+      - 42
+      - 43
+      - 53
+      - 55
+      - 56
+  - main: 21
+    children:
+      - 22
+      - 36
+      - 101
+  - main: 45
+    children:
+      - 46
+      - 47
+  - main: 64
+    children:
+      - 66
+      - 67
+      - 68
+      - 69
+      - 70
+      - 80
+      - 81
+      - 82
+  - main: 74
+    children:
+      - 76
+      - 77
+      - 78
+      - 79
+  - main: 83
+    children:
+      - 84
+      - 85
+      - 86
+      - 87
+      - 88
+      - 89
+      - 90
+      - 91
+      - 92
+      - 93
+      - 94
+      - 95
+      - 96
+      - 97
+      - 98
+      - 116
+      - 117
+      - 118
+      - 119
+      - 120
+      - 121
+      - 122
+      - 123
+      - 124
+      - 125
+      - 126
+      - 127
+      - 128
+      - 129
+      - 130
+      - 131
+      - 133
+      - 134
+      - 135
+      - 137
+      - 138
+      - 139
+      - 140
+  - main: 147
+    children:
+      - 149
+      - 150
+      - 151
+      - 152
+      - 153
+      - 154
+      - 155
+      - 156
+      - 157
+      - 158
+      - 159
+      - 160
+      - 161
+      - 162
+      - 163
+      - 164
+      - 165
+      - 166
+      - 167
+      - 173
+      - 178
+      - 179
+      - 180
+      - 181
+      - 182
+      - 187
+      - 188
+      - 189
+      - 190
+      - 192
+      - 194
+      - 195
+      - 196
+      - 198
+    edges:
+      - from: 149
+        to: 150
+        needs_contract: true
+        contract_ref: openspec/changes/workflow-spec-apply-destructive-preview/design.md
+      - from: 154
+        to: 155
+        needs_contract: true
+      - from: 157
+        to: 158
+        needs_contract: true
+        contract_ref: openspec/specs/workflow-spec-dto-contract
+      - from: 157
+        to: 159
+        needs_contract: true
+        contract_ref: openspec/specs/workflow-spec-dto-contract
+      - from: 163
+        to: 173
+        needs_contract: false
+      - from: 165
+        to: 163
+        needs_contract: true
+      - from: 165
+        to: 173
+        needs_contract: true
+  - main: 177
+    children:
+      - 201
+  - main: 202
+    children:
+      - 206
+      - 207

@@ -1,0 +1,88 @@
+export interface Team {
+  id: string
+  name: string
+}
+
+export interface Member {
+  login: string
+  name: string
+  teamIds: string[]
+}
+
+export const teams: Team[] = [
+  { id: 'qflow-fe', name: 'qflow-fe' },
+  { id: 'backend', name: 'backend' },
+  { id: 'yfzx', name: 'yfzx' },
+  { id: 'beops', name: 'beOps' },
+  { id: 'qingflow-framework', name: 'qingflow-framework' },
+  { id: 'qingflow-group', name: 'qingflow-study' },
+  { id: 'gitlab-instance-administrators-7809f855', name: 'GitLab Instance Administrators' },
+  { id: 'security', name: 'Security' },
+  { id: 'qingflow-develop', name: 'qingflow-develop' },
+]
+
+export const members: Member[] = [
+  { login: 'ai-agent', name: 'ai-agent', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'ceshi1', name: 'ceshi1', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'ceshi2', name: 'ceshi2', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'ceshi3', name: 'ceshi3', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'ceshi4', name: 'ceshi4', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'chengpan', name: 'chengpan', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'chenxinpei', name: 'chenxinpei', teamIds: ['qflow-fe', 'backend', 'yfzx', 'beops', 'qingflow-framework', 'qingflow-group', 'qingflow-develop'] },
+  { login: 'chenyongsheng', name: 'chenyongsheng', teamIds: ['backend', 'qingflow-develop'] },
+  { login: 'gaojie1', name: 'gaojie1', teamIds: ['qingflow-develop'] },
+  { login: 'gitlab-bot', name: 'GitLab Bot', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'group_22_bot1', name: 'pnpm install packages', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'guomengmeng', name: 'guomengmeng', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-framework', 'qingflow-group', 'qingflow-develop'] },
+  { login: 'hanmeng', name: 'hanmeng', teamIds: ['backend', 'beops', 'qingflow-framework', 'qingflow-group', 'qingflow-develop'] },
+  { login: 'hebin', name: 'hebin', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'huhanwena', name: 'huhanwen', teamIds: ['qflow-fe', 'backend', 'yfzx', 'beops', 'qingflow-framework', 'gitlab-instance-administrators-7809f855', 'qingflow-develop'] },
+  { login: 'jenkins', name: 'jenkins', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'jinbiao', name: 'jinbiao', teamIds: ['qflow-fe', 'backend', 'yfzx', 'beops', 'qingflow-framework', 'qingflow-group', 'qingflow-develop'] },
+  { login: 'lichengrui', name: 'lichengrui', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'liguochi', name: 'liguochi', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'lijiangyu', name: 'lijiangyu', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'liuxb', name: 'liuxb', teamIds: ['qflow-fe', 'backend', 'yfzx', 'beops', 'qingflow-framework', 'qingflow-develop'] },
+  { login: 'liyulun', name: 'liyulun', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'luhua', name: 'luhua', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'luzijian', name: 'luzijian', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'mazhiwei', name: 'mazhiwei', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'miaozhuoyue', name: 'miaozhuoyue', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'panshiming', name: '前夕', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'qianwenqiang', name: 'qianwenqiang', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'qihengyu', name: 'qihengyu', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-framework', 'qingflow-group', 'qingflow-develop'] },
+  { login: 'root', name: 'Administrator', teamIds: ['qflow-fe', 'beops', 'gitlab-instance-administrators-7809f855', 'qingflow-develop'] },
+  { login: 'shenyinyin', name: 'shenyinyin', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'shichichi', name: 'shichichi', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'shihao', name: 'shihao', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'shihaocong', name: 'shihaocong', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'shitianpei', name: 'shitianpei', teamIds: ['qflow-fe', 'backend', 'yfzx', 'beops', 'qingflow-framework', 'qingflow-group', 'qingflow-develop'] },
+  { login: 'tangdiying', name: 'tangdiying', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'tangxu', name: 'tangxu', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'tengzhiwen', name: 'tengzhiwen', teamIds: ['backend', 'qingflow-develop'] },
+  { login: 'tongkang', name: 'tongkang', teamIds: ['backend', 'beops', 'qingflow-framework', 'qingflow-group', 'qingflow-develop'] },
+  { login: 'wangchao', name: 'wangchao', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'wangjiankun', name: 'wangjiankun', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'wanglongwei', name: 'wanglongwei', teamIds: ['qflow-fe', 'security', 'qingflow-develop'] },
+  { login: 'wangxudong', name: 'wangxudong', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'wangzhen', name: 'wangzhen', teamIds: ['qflow-fe', 'backend', 'yfzx', 'beops', 'qingflow-framework', 'gitlab-instance-administrators-7809f855', 'qingflow-develop'] },
+  { login: 'wenyizhi', name: 'wenyizhi', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'wuwanxiang', name: 'wuwanxiang', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'xiayanling', name: 'xiayanling', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'xubohua', name: 'xubohua', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'xulei', name: 'xulei', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'xuzhicheng', name: 'xuzhicheng', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'yanqidong', name: 'yanqidong', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'yedeng', name: 'yedeng', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'yedongze', name: 'yedongze', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'yinwenkai', name: 'yinwenkai', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'youjiahua', name: 'youjiahua', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'yuyuying', name: 'yuyuying', teamIds: ['qflow-fe', 'backend', 'yfzx', 'security', 'qingflow-develop'] },
+  { login: 'zhangdongkui', name: 'zhangdongkui', teamIds: ['qflow-fe', 'backend', 'yfzx', 'beops', 'qingflow-framework', 'qingflow-group', 'qingflow-develop'] },
+  { login: 'zhangpeng', name: 'zhangpeng', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'zhangqi', name: 'zhangqi', teamIds: ['qflow-fe', 'qingflow-develop'] },
+  { login: 'zhangyong', name: 'zhangyong', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'zhaohaozhe', name: 'zhaohaozhe', teamIds: ['qflow-fe', 'backend', 'yfzx', 'beops', 'qingflow-develop'] },
+  { login: 'zhaolifeng', name: 'zhaolifeng', teamIds: ['qflow-fe', 'backend', 'yfzx', 'qingflow-develop'] },
+  { login: 'zhongjie', name: 'zhongjie', teamIds: ['qflow-fe', 'qingflow-develop'] },
+]
