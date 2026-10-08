@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import SkillBoard from '@/components/SkillBoard.vue'
 import { fetchGitlabProjects, saveProject, type GitlabProject } from '@/api/client'
 import { useProjectStore } from '@/stores/projects'
 
 const projects = useProjectStore()
+const pane = ref<'workspace' | 'skills'>('workspace')
 const drafting = ref(false)
 const name = ref('')
 const path = ref('')
@@ -131,15 +133,26 @@ async function save() {
 </script>
 
 <template>
-  <main class="project">
+  <main class="project" :class="{ 'skill-page': pane === 'skills' }">
     <header class="head">
       <h1>项目</h1>
-      <p>指定一个 GitLab 工程作为这个项目的 workspace。issue、规格和契约都从这里读。</p>
+      <div class="panes" role="tablist" aria-label="项目内容">
+        <button type="button" role="tab" :aria-selected="pane === 'workspace'" :class="{ on: pane === 'workspace' }" @click="pane = 'workspace'">
+          工程
+        </button>
+        <button type="button" role="tab" :aria-selected="pane === 'skills'" :class="{ on: pane === 'skills' }" @click="pane = 'skills'">
+          Skill
+        </button>
+      </div>
+      <p v-if="pane === 'workspace'">指定一个 GitLab 工程作为这个项目的 workspace。issue、规格和契约都从这里读。</p>
+      <p v-else>当前 workspace 的 skills 目录。</p>
     </header>
 
-    <p v-if="!ready" class="note">正在读取项目。</p>
-    <p v-else-if="loadError" class="note">{{ loadError }}</p>
-    <form v-else class="form" @submit.prevent="save">
+    <SkillBoard v-if="pane === 'skills'" />
+
+    <p v-if="pane === 'workspace' && !ready" class="note">正在读取项目。</p>
+    <p v-else-if="pane === 'workspace' && loadError" class="note">{{ loadError }}</p>
+    <form v-else-if="pane === 'workspace'" class="form" @submit.prevent="save">
       <div class="roster">
         <button
           v-for="item in projects.projects"
@@ -196,12 +209,44 @@ async function save() {
 </template>
 
 <style scoped>
+.skill-page {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.skill-page .head {
+  flex: none;
+}
+
 .head h1 {
   margin: 0;
   font-size: 28px;
   line-height: 1.2;
   font-weight: 650;
   letter-spacing: -0.03em;
+}
+
+.panes {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.panes button {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.panes button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .head p,

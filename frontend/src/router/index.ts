@@ -27,6 +27,11 @@ const router = createRouter({
       component: () => import('../views/MembersView.vue'),
     },
     {
+      path: '/agents',
+      name: 'agents',
+      component: () => import('../views/AgentView.vue'),
+    },
+    {
       path: '/tasks/:code/spec',
       name: 'task-spec',
       component: () => import('../views/SpecView.vue'),

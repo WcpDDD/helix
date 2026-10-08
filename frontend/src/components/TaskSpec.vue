@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref, watch } from 'vue'
-import { specFilesForTask } from '@/data/taskSpec'
+import { computed, ref, watch } from 'vue'
+import { fetchTaskSpec, type TaskSpecCheckout } from '@/api/client'
 import type { Task } from '@/data/tasks'
 import { renderMarkdown } from '@/markdown'
 
@@ -10,48 +10,43 @@ const props = defineProps<{
 }>()
 
 const cloneSteps = ['对齐引用', '浅克隆指定分支', '读取 openspec']
-const phase = ref<'clone' | 'ready'>('clone')
-const cloneAt = ref(0)
+const phase = ref<'clone' | 'ready' | 'empty' | 'error'>('clone')
+const notice = ref('')
+const cloneAt = ref(1)
+const checkout = ref<TaskSpecCheckout>({ branch: '', commit: '', files: [] })
 const selectedPath = ref('')
 const docEl = ref<HTMLElement | null>(null)
-let timers: ReturnType<typeof setTimeout>[] = []
 
-const checkout = computed(() => specFilesForTask(props.task.code))
-const workspaceName = computed(() => props.workspace || checkout.value.workspace)
+const workspaceName = computed(() => props.workspace || '')
 const current = computed(() => checkout.value.files.find((file) => file.path === selectedPath.value) ?? checkout.value.files[0])
 const html = computed(() => (current.value ? renderMarkdown(current.value.markdown) : ''))
 
 watch(
   () => props.task.code,
-  () => {
-    selectedPath.value = checkout.value.files[0]?.path ?? ''
-    startClone()
+  (code) => {
+    void load(code)
   },
   { immediate: true },
 )
 
-onUnmounted(clearTimers)
-
-function startClone() {
-  clearTimers()
+async function load(code: string) {
   phase.value = 'clone'
-  cloneAt.value = 0
-  timers = [
-    setTimeout(() => {
-      cloneAt.value = 1
-    }, 420),
-    setTimeout(() => {
-      cloneAt.value = 2
-    }, 980),
-    setTimeout(() => {
-      phase.value = 'ready'
-    }, 2400),
-  ]
-}
-
-function clearTimers() {
-  for (const timer of timers) clearTimeout(timer)
-  timers = []
+  notice.value = ''
+  cloneAt.value = 1
+  checkout.value = { branch: '', commit: '', files: [] }
+  selectedPath.value = ''
+  try {
+    const next = await fetchTaskSpec(code)
+    if (code !== props.task.code) return
+    checkout.value = next
+    selectedPath.value = next.files[0]?.path ?? ''
+    phase.value = next.files.length > 0 ? 'ready' : 'empty'
+    if (next.files.length === 0) notice.value = '这张任务还没有规格。'
+  } catch (error: unknown) {
+    if (code !== props.task.code) return
+    phase.value = 'error'
+    notice.value = error instanceof Error && error.name === 'IssueReadAuthError' ? '登录后才能读取规格。' : '规格没有读到。'
+  }
 }
 
 function fileLabel(path: string): string {
@@ -69,8 +64,7 @@ function open(path: string) {
   <div class="spec">
     <div v-if="phase === 'clone'" class="clone" role="status" aria-live="polite">
       <p class="clone-k">正在浅克隆</p>
-      <p class="clone-branch">{{ checkout.branch }}</p>
-      <p class="clone-repo">{{ workspaceName }} · 只取该分支最新提交</p>
+      <p v-if="workspaceName" class="clone-repo">{{ workspaceName }} · 只取该分支最新提交</p>
       <ol class="clone-steps">
         <li v-for="(label, index) in cloneSteps" :key="label" :class="{ on: index === cloneAt, done: index < cloneAt }">
           <span class="mark" aria-hidden="true" />
@@ -78,6 +72,8 @@ function open(path: string) {
         </li>
       </ol>
     </div>
+
+    <p v-else-if="phase === 'empty' || phase === 'error'" class="wait">{{ notice }}</p>
 
     <template v-else>
       <div class="meta">
@@ -123,6 +119,11 @@ function open(path: string) {
 
 .clone {
   padding: 8px 0 12px;
+}
+
+.wait {
+  margin: 12px 0 0;
+  color: var(--muted);
 }
 
 .clone-k {

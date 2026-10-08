@@ -105,6 +105,100 @@ export function fetchTasks(): Promise<Task[]> {
   return getJson<Task[]>('/api/tasks')
 }
 
+export interface SkillEntry {
+  name: string
+  path: string
+  files: string[]
+}
+
+export interface SkillFile {
+  path: string
+  markdown: string
+}
+
+export function fetchSkills(): Promise<SkillEntry[]> {
+  return fetchIssueJson<SkillEntry[]>('/api/skills')
+}
+
+export function fetchSkillFile(path: string): Promise<SkillFile> {
+  return fetchIssueJson<SkillFile>(`/api/skills/file?path=${encodeURIComponent(path)}`)
+}
+
+export interface AgentRecord {
+  id: number
+  name: string
+  body: string
+  skills: string[]
+}
+
+export interface AgentDraft {
+  name: string
+  body: string
+  skills: string[]
+}
+
+export function fetchAgents(): Promise<AgentRecord[]> {
+  return fetchIssueJson<AgentRecord[]>('/api/agents')
+}
+
+export async function createAgent(draft: AgentDraft): Promise<AgentRecord> {
+  return writeAgent('/api/agents', 'POST', draft)
+}
+
+export async function updateAgent(id: number, draft: AgentDraft): Promise<AgentRecord> {
+  return writeAgent(`/api/agents/${id}`, 'PUT', draft)
+}
+
+export async function deleteAgent(id: number): Promise<void> {
+  const response = await fetch(`/api/agents/${id}`, { method: 'DELETE' })
+  if (response.status === 401) {
+    const error = new Error('login')
+    error.name = 'IssueReadAuthError'
+    throw error
+  }
+  if (!response.ok) {
+    throw new Error(`/api/agents/${id} returned ${response.status}`)
+  }
+}
+
+async function writeAgent(path: string, method: string, draft: AgentDraft): Promise<AgentRecord> {
+  const response = await fetch(path, {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(draft),
+  })
+  if (response.status === 401) {
+    const error = new Error('login')
+    error.name = 'IssueReadAuthError'
+    throw error
+  }
+  if (response.status === 409) {
+    throw new Error('已经有同名 agent。')
+  }
+  if (response.status === 400) {
+    throw new Error('名称或 skill 引用没有通过。')
+  }
+  if (!response.ok) {
+    throw new Error(`${path} returned ${response.status}`)
+  }
+  return response.json() as Promise<AgentRecord>
+}
+
+export interface TaskSpecFile {
+  path: string
+  markdown: string
+}
+
+export interface TaskSpecCheckout {
+  branch: string
+  commit: string
+  files: TaskSpecFile[]
+}
+
+export async function fetchTaskSpec(code: string): Promise<TaskSpecCheckout> {
+  return fetchIssueJson<TaskSpecCheckout>(`/api/tasks/${encodeURIComponent(code)}/spec`)
+}
+
 export interface MemberRoleAssignment {
   login: string
   roles: string[]

@@ -7,7 +7,9 @@
 }
 
 .shell:has(.split),
-.shell:has(.spec-page) {
+.shell:has(.spec-page),
+.shell:has(.skill-page),
+.shell:has(.agent-page) {
   display: flex;
   flex-direction: column;
   height: 100vh;

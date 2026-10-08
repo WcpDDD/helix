@@ -4,9 +4,11 @@ import java.util.List;
 
 import dev.helix.auth.AuthController;
 import dev.helix.board.CurrentProject;
+import dev.helix.board.SpecCheckout;
 import dev.helix.board.TaskBoardService;
 import dev.helix.board.TaskStatusService;
 import dev.helix.board.TaskView;
+import dev.helix.board.WorkspaceSpecService;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -28,18 +30,26 @@ public class TaskController {
 
 	private final TaskStatusService taskStatusService;
 
+	private final WorkspaceSpecService specs;
+
 	private final CurrentProject currentProject;
 
 	public TaskController(TaskBoardService taskBoardService, TaskStatusService taskStatusService,
-			CurrentProject currentProject) {
+			WorkspaceSpecService specs, CurrentProject currentProject) {
 		this.taskBoardService = taskBoardService;
 		this.taskStatusService = taskStatusService;
+		this.specs = specs;
 		this.currentProject = currentProject;
 	}
 
 	@GetMapping("/tasks")
 	public List<TaskView> list(HttpSession session) {
 		return taskBoardService.list(currentProject.resolve(session).getId());
+	}
+
+	@GetMapping("/tasks/{code}/spec")
+	public SpecCheckout spec(@PathVariable int code, HttpSession session) {
+		return specs.checkout(token(session), currentProject.resolve(session).getId(), code);
 	}
 
 	@PostMapping("/tasks/{code}/status")
