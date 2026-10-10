@@ -72,7 +72,7 @@ onUnmounted(() => {
       </RouterLink>
       <nav class="nav">
         <RouterLink to="/">任务</RouterLink>
-        <RouterLink to="/project">项目</RouterLink>
+        <RouterLink to="/skills">Skill</RouterLink>
         <RouterLink to="/members">成员</RouterLink>
         <RouterLink to="/agents">Agent</RouterLink>
         <RouterLink to="/collab">协同</RouterLink>
@@ -99,6 +99,9 @@ onUnmounted(() => {
               >
                 {{ item.name }}
               </button>
+            </li>
+            <li class="project-manage">
+              <RouterLink to="/project" @click="menuOpen = false">管理项目</RouterLink>
             </li>
           </ul>
         </div>

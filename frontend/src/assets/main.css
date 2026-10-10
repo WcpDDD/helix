@@ -139,6 +139,25 @@
   color: var(--accent);
 }
 
+.project-manage {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+}
+
+.project-manage a {
+  display: block;
+  padding: 8px 12px;
+  border-radius: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.project-manage a.router-link-exact-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .bar-rule {
   width: 1px;
   height: 16px;
