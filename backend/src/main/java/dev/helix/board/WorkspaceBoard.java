@@ -11,6 +11,7 @@ import java.util.concurrent.ConcurrentMap;
 import dev.helix.config.HelixProperties;
 import dev.helix.gitlab.GitlabIssueException;
 import dev.helix.gitlab.GitlabRepositoryClient;
+import dev.helix.work.ProjectWorkspaces;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -31,22 +32,37 @@ public class WorkspaceBoard {
 
 	private final GitlabRepositoryClient gitlab;
 
+	private final ProjectWorkspaces workspaces;
+
 	private final ConcurrentMap<Long, BoardFile> cache = new ConcurrentHashMap<>();
 
 	private volatile BoardFile local;
 
 	private volatile long localStamp = Long.MIN_VALUE;
 
-	public WorkspaceBoard(HelixProperties properties, ProjectRepository projects, GitlabRepositoryClient gitlab) {
+	public WorkspaceBoard(HelixProperties properties, ProjectRepository projects, GitlabRepositoryClient gitlab,
+			ProjectWorkspaces workspaces) {
 		this.properties = properties;
 		this.projects = projects;
 		this.gitlab = gitlab;
+		this.workspaces = workspaces;
+	}
+
+	public boolean pinnedFile() {
+		return location() != null;
 	}
 
 	public BoardFile current(long projectId) {
 		String location = location();
 		if (location != null) {
 			return readLocal(location);
+		}
+		ProjectEntity project = projects.findById(projectId).orElse(null);
+		if (project != null) {
+			Path directory = workspaces.opened(project);
+			if (directory != null) {
+				return readCheckout(directory.resolve("board.yaml"));
+			}
 		}
 		return cache.getOrDefault(projectId, BoardFile.empty());
 	}
@@ -71,6 +87,22 @@ public class WorkspaceBoard {
 			catch (IllegalArgumentException exception) {
 				log.warn("{} 的 board.yaml 不能用: {}", project.getName(), exception.getMessage());
 			}
+		}
+	}
+
+	private BoardFile readCheckout(Path path) {
+		if (!Files.isRegularFile(path)) {
+			return BoardFile.empty();
+		}
+		try {
+			return BoardFile.parse(Files.readString(path));
+		}
+		catch (IOException exception) {
+			throw new IllegalStateException("board.yaml 没有读到", exception);
+		}
+		catch (IllegalArgumentException exception) {
+			log.warn("工作目录里的 board.yaml 不能用: {}", exception.getMessage());
+			return BoardFile.empty();
 		}
 	}
 

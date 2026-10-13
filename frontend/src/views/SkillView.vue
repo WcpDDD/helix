@@ -6,7 +6,7 @@ import SkillBoard from '@/components/SkillBoard.vue'
   <main class="skill-page">
     <header class="head">
       <h1>Skill</h1>
-      <p>当前 workspace 的 skills 目录。</p>
+      <p>当前项目主分支工作目录里的 skills。</p>
     </header>
     <SkillBoard />
   </main>

@@ -5,7 +5,8 @@ import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 
 @ConfigurationProperties(prefix = "helix")
-public record HelixProperties(String frontendUrl, Duration alignInterval, String boardFile, Gitlab gitlab) {
+public record HelixProperties(String frontendUrl, Duration alignInterval, String boardFile, String workRoot,
+		String workPullTimes, Integer workSyncParallel, Gitlab gitlab) {
 
 	public record Gitlab(String baseUrl, String clientId, String clientSecret, String redirectUri, String scope) {
 

@@ -5,10 +5,14 @@ import java.util.List;
 import dev.helix.auth.AuthController;
 import dev.helix.auth.GitlabUser;
 import dev.helix.board.CurrentProject;
+import dev.helix.board.ProjectEntity;
+import dev.helix.board.ProjectRepository;
 import dev.helix.board.ProjectWorkspaceService;
 import dev.helix.gitlab.GitlabProjectRef;
 import dev.helix.project.Project;
 import dev.helix.project.ProjectService;
+import dev.helix.work.ProjectWorkspaces;
+import dev.helix.work.WorkSnapshot;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -34,10 +38,17 @@ public class ProjectController {
 
 	private final CurrentProject currentProject;
 
-	public ProjectController(ProjectService projectService, ProjectWorkspaceService workspace, CurrentProject currentProject) {
+	private final ProjectRepository projects;
+
+	private final ProjectWorkspaces workspaces;
+
+	public ProjectController(ProjectService projectService, ProjectWorkspaceService workspace, CurrentProject currentProject,
+			ProjectRepository projects, ProjectWorkspaces workspaces) {
 		this.projectService = projectService;
 		this.workspace = workspace;
 		this.currentProject = currentProject;
+		this.projects = projects;
+		this.workspaces = workspaces;
 	}
 
 	@GetMapping("/projects")
@@ -50,10 +61,34 @@ public class ProjectController {
 		return ProjectService.view(currentProject.resolve(http.getSession(false)));
 	}
 
+	@GetMapping("/projects/current/work")
+	public WorkSnapshot work(HttpServletRequest http) {
+		requireUser(http);
+		return workspaces.status(currentProject.resolve(http.getSession(false)), token(http));
+	}
+
+	@PostMapping("/projects/current/work/pull")
+	public WorkSnapshot pull(HttpServletRequest http) {
+		requireUser(http);
+		ProjectEntity project = currentProject.resolve(http.getSession(false));
+		workspaces.requestPull(project, token(http));
+		return workspaces.status(project, token(http));
+	}
+
+	@PostMapping("/projects/current/work/push")
+	public WorkSnapshot push(HttpServletRequest http) {
+		requireUser(http);
+		ProjectEntity project = currentProject.resolve(http.getSession(false));
+		workspaces.requestPush(project, token(http));
+		return workspaces.status(project, token(http));
+	}
+
 	@PutMapping("/projects/current")
 	public Project use(@RequestBody IdRequest request, HttpServletRequest http) {
 		requireUser(http);
 		long id = request == null ? 0 : request.id();
+		ProjectEntity project = projects.findById(id).orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+		workspaces.prepare(project, token(http));
 		return ProjectService.view(currentProject.select(http.getSession(true), id));
 	}
 
@@ -63,6 +98,9 @@ public class ProjectController {
 		String path = request == null ? null : request.path();
 		String name = request == null ? null : request.name();
 		Project created = workspace.create(name, path, token(http));
+		ProjectEntity project = projects.findById(created.id())
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+		workspaces.prepare(project, token(http));
 		currentProject.select(http.getSession(true), created.id());
 		return created;
 	}

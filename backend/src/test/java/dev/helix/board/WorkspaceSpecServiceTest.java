@@ -1,13 +1,16 @@
 package dev.helix.board;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
 
 import dev.helix.gitlab.GitlabIssueClient;
-import dev.helix.gitlab.GitlabRepositoryClient;
+import dev.helix.work.ProjectWorkspaces;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -15,11 +18,13 @@ import static org.mockito.Mockito.when;
 
 class WorkspaceSpecServiceTest {
 
+	@TempDir
+	Path temp;
+
 	@Test
-	void readsMarkdownUnderTheSpecDirectory() {
+	void readsMarkdownFromTheMainCheckout() throws Exception {
 		IssueRepository issues = mock(IssueRepository.class);
 		GitlabIssueClient gitlab = mock(GitlabIssueClient.class);
-		GitlabRepositoryClient repository = mock(GitlabRepositoryClient.class);
 		ProjectEntity project = new ProjectEntity("qingflow-workspace", "hackers.oalite.com", "qingflow-develop",
 				"qingflow-workspace");
 		TaskEntity task = new TaskEntity(project, "提案中", "提案", LocalDate.of(2026, 10, 8), null, null);
@@ -36,25 +41,34 @@ class WorkspaceSpecServiceTest {
 						规格：openspec/changes/helix-spec-reader
 						<!-- /helix -->
 						""");
-		when(repository.commitSha("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", "main"))
-				.thenReturn("abc1234ffff");
-		when(repository.blobs("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace",
-				"openspec/changes/helix-spec-reader", "main")).thenReturn(java.util.List.of(
-						"openspec/changes/helix-spec-reader/tasks.md",
-						"openspec/changes/helix-spec-reader/proposal.md"));
-		when(repository.fileAt("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace",
-				"openspec/changes/helix-spec-reader/proposal.md", "main")).thenReturn("# 提案");
-		when(repository.fileAt("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace",
-				"openspec/changes/helix-spec-reader/tasks.md", "main")).thenReturn("# 任务");
+		ProjectWorkspaces workspaces = new ProjectWorkspaces(temp, null, null);
+		Path checkout = workspaces.directory(project);
+		Files.createDirectories(checkout.resolve("openspec/changes/helix-spec-reader"));
+		Files.writeString(checkout.resolve("openspec/changes/helix-spec-reader/proposal.md"), "# 提案");
+		Files.writeString(checkout.resolve("openspec/changes/helix-spec-reader/tasks.md"), "# 任务");
+		git(checkout, "init", "-b", "main");
+		git(checkout, "add", "-A");
+		git(checkout, "-c", "user.name=Helix", "-c", "user.email=helix@localhost", "commit", "-m", "规格");
 
-		SpecCheckout checkout = new WorkspaceSpecService(issues, gitlab, repository).checkout("tok", 1L, 321);
+		SpecCheckout checkoutView = new WorkspaceSpecService(issues, gitlab, workspaces).checkout("tok", 1L, 321);
 
-		assertThat(checkout.branch()).isEqualTo("main");
-		assertThat(checkout.commit()).isEqualTo("abc1234");
-		assertThat(checkout.files()).extracting(SpecCheckout.SpecFile::path).containsExactly(
+		assertThat(checkoutView.branch()).isEqualTo("main");
+		assertThat(checkoutView.commit()).hasSize(7);
+		assertThat(checkoutView.files()).extracting(SpecCheckout.SpecFile::path).containsExactly(
 				"openspec/changes/helix-spec-reader/proposal.md",
 				"openspec/changes/helix-spec-reader/tasks.md");
-		assertThat(checkout.files().get(0).markdown()).isEqualTo("# 提案");
+		assertThat(checkoutView.files().get(0).markdown()).isEqualTo("# 提案");
+	}
+
+	private static void git(Path directory, String... args) throws Exception {
+		java.util.List<String> command = new java.util.ArrayList<>();
+		command.add("git");
+		command.addAll(java.util.List.of(args));
+		Process process = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true).start();
+		String output = new String(process.getInputStream().readAllBytes());
+		if (process.waitFor() != 0) {
+			throw new IllegalStateException(output);
+		}
 	}
 
 }

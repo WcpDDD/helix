@@ -62,6 +62,42 @@ public class GitlabIssueClient {
 		}
 	}
 
+	public Map<Integer, IssueHead> heads(String accessToken, String gitHost, String owner, String repo, List<Integer> iids) {
+		Map<Integer, IssueHead> found = new LinkedHashMap<>();
+		if (iids.isEmpty()) {
+			return found;
+		}
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		try {
+			for (int offset = 0; offset < iids.size(); offset += 50) {
+				List<Integer> chunk = iids.subList(offset, Math.min(offset + 50, iids.size()));
+				StringBuilder query = new StringBuilder();
+				for (Integer iid : chunk) {
+					if (!query.isEmpty()) {
+						query.append('&');
+					}
+					query.append("iids[]=").append(iid);
+				}
+				HeadPayload[] payload = http.get()
+						.uri(URI.create(origin + "/api/v4/projects/" + project + "/issues?" + query + "&per_page=100"))
+						.header("Authorization", "Bearer " + accessToken)
+						.retrieve()
+						.body(HeadPayload[].class);
+				if (payload != null) {
+					for (HeadPayload issue : payload) {
+						found.put(issue.iid(), new IssueHead(issue.iid(), text(issue.title()),
+								issue.description() == null ? "" : issue.description(), person(issue.author()),
+								person(first(issue.assignees()))));
+					}
+				}
+			}
+			return found;
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
 	public Map<Integer, String> descriptions(String accessToken, String gitHost, String owner, String repo,
 			List<Integer> iids) {
 		Map<Integer, String> found = new LinkedHashMap<>();
@@ -140,6 +176,18 @@ public class GitlabIssueClient {
 		return new GitlabIssueException(502);
 	}
 
+	private static String person(Author author) {
+		return author(author);
+	}
+
+	private static Author first(Author[] authors) {
+		return authors == null || authors.length == 0 ? null : authors[0];
+	}
+
+	private static String text(String value) {
+		return value == null ? "" : value;
+	}
+
 	private static String author(Author author) {
 		if (author == null) {
 			return "";
@@ -163,6 +211,13 @@ public class GitlabIssueClient {
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	private record Payload(@JsonProperty("description") String description) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	private record HeadPayload(int iid, String title, String description, Author author, Author[] assignees) {
+	}
+
+	public record IssueHead(int iid, String title, String description, String author, String assignee) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

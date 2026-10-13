@@ -51,6 +51,10 @@ public class AgentEntity {
 		return id;
 	}
 
+	public ProjectEntity getProject() {
+		return project;
+	}
+
 	public String getName() {
 		return name;
 	}

@@ -12,6 +12,7 @@ const file = ref<SkillFile | null>(null)
 const phase = ref<'loading' | 'ready' | 'empty' | 'error'>('loading')
 const filePhase = ref<'loading' | 'ready' | 'error'>('loading')
 const notice = ref('')
+let retryTimer = 0
 
 const current = computed(() => skills.value.find((skill) => skill.path === selected.value) ?? null)
 const html = computed(() => (file.value ? renderMarkdown(skillBody(file.value.markdown)) : ''))
@@ -25,6 +26,7 @@ watch(
 )
 
 async function load() {
+  window.clearTimeout(retryTimer)
   phase.value = 'loading'
   notice.value = ''
   skills.value = []
@@ -41,6 +43,12 @@ async function load() {
     phase.value = 'ready'
     await openSkill(next[0])
   } catch (error: unknown) {
+    if (error instanceof Error && error.name === 'WorkspacePreparing') {
+      phase.value = 'error'
+      notice.value = '主分支还在准备，最近 10 个提交拉下来就能读。'
+      retryTimer = window.setTimeout(() => void load(), 2000)
+      return
+    }
     phase.value = 'error'
     notice.value = error instanceof Error && error.name === 'IssueReadAuthError' ? '登录后才能读取 skills。' : 'skills 没有读到。'
   }

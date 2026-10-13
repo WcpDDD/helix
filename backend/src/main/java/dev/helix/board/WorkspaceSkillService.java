@@ -1,9 +1,10 @@
 package dev.helix.board;
 
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.List;
 
-import dev.helix.gitlab.GitlabIssueException;
-import dev.helix.gitlab.GitlabRepositoryClient;
+import dev.helix.work.ProjectWorkspaces;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -12,25 +13,18 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class WorkspaceSkillService {
 
-	private final GitlabRepositoryClient repository;
+	private final ProjectWorkspaces workspaces;
 
-	public WorkspaceSkillService(GitlabRepositoryClient repository) {
-		this.repository = repository;
+	public WorkspaceSkillService(ProjectWorkspaces workspaces) {
+		this.workspaces = workspaces;
 	}
 
 	public List<SkillIndex.SkillView> list(String accessToken, ProjectEntity project) {
-		String branch = branch(accessToken, project);
-		try {
-			List<String> blobs = repository.blobs(accessToken, project.getGitHost(), project.getGitOwner(),
-					project.getGitRepo(), "skills", branch);
-			if (blobs == null) {
-				return List.of();
-			}
-			return SkillIndex.fromPaths(blobs);
+		Path root = workspaces.require(project, accessToken);
+		if (!Files.isDirectory(root.resolve("skills"))) {
+			return List.of();
 		}
-		catch (GitlabIssueException exception) {
-			throw failure(exception);
-		}
+		return SkillIndex.fromPaths(workspaces.markdownUnder(root, "skills"));
 	}
 
 	public SkillFile file(String accessToken, ProjectEntity project, String path) {
@@ -41,35 +35,8 @@ public class WorkspaceSkillService {
 		catch (IllegalArgumentException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
 		}
-		String branch = branch(accessToken, project);
-		try {
-			String markdown = repository.fileAt(accessToken, project.getGitHost(), project.getGitOwner(),
-					project.getGitRepo(), safe, branch);
-			return new SkillFile(safe, markdown);
-		}
-		catch (GitlabIssueException exception) {
-			throw failure(exception);
-		}
-	}
-
-	private String branch(String accessToken, ProjectEntity project) {
-		try {
-			return repository.defaultBranch(accessToken, project.getGitHost(), project.getGitOwner(),
-					project.getGitRepo());
-		}
-		catch (GitlabIssueException exception) {
-			throw failure(exception);
-		}
-	}
-
-	private static ResponseStatusException failure(GitlabIssueException exception) {
-		if (exception.status() == 401 || exception.status() == 403) {
-			return new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-		}
-		if (exception.status() == 404) {
-			return new ResponseStatusException(HttpStatus.NOT_FOUND);
-		}
-		return new ResponseStatusException(HttpStatus.BAD_GATEWAY);
+		String markdown = workspaces.read(workspaces.require(project, accessToken), safe);
+		return new SkillFile(safe, markdown);
 	}
 
 	public record SkillFile(String path, String markdown) {

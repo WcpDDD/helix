@@ -9,7 +9,7 @@ const props = defineProps<{
   workspace?: string
 }>()
 
-const cloneSteps = ['对齐引用', '浅克隆指定分支', '读取 openspec']
+const cloneSteps = ['对齐引用', '拉取最近 10 个提交', '读取 openspec']
 const phase = ref<'clone' | 'ready' | 'empty' | 'error'>('clone')
 const notice = ref('')
 const cloneAt = ref(1)
@@ -44,6 +44,14 @@ async function load(code: string) {
     if (next.files.length === 0) notice.value = '这张任务还没有规格。'
   } catch (error: unknown) {
     if (code !== props.task.code) return
+    if (error instanceof Error && error.name === 'WorkspacePreparing') {
+      phase.value = 'clone'
+      notice.value = '主分支还在准备。'
+      window.setTimeout(() => {
+        if (code === props.task.code) void load(code)
+      }, 2000)
+      return
+    }
     phase.value = 'error'
     notice.value = error instanceof Error && error.name === 'IssueReadAuthError' ? '登录后才能读取规格。' : '规格没有读到。'
   }
@@ -64,7 +72,7 @@ function open(path: string) {
   <div class="spec">
     <div v-if="phase === 'clone'" class="clone" role="status" aria-live="polite">
       <p class="clone-k">正在浅克隆</p>
-      <p v-if="workspaceName" class="clone-repo">{{ workspaceName }} · 只取该分支最新提交</p>
+      <p v-if="workspaceName" class="clone-repo">{{ workspaceName }} · 最近 10 个提交</p>
       <ol class="clone-steps">
         <li v-for="(label, index) in cloneSteps" :key="label" :class="{ on: index === cloneAt, done: index < cloneAt }">
           <span class="mark" aria-hidden="true" />

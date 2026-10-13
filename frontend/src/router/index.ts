@@ -37,6 +37,11 @@ const router = createRouter({
       component: () => import('../views/AgentView.vue'),
     },
     {
+      path: '/workers',
+      name: 'workers',
+      component: () => import('../views/WorkerView.vue'),
+    },
+    {
       path: '/tasks/:code/spec',
       name: 'task-spec',
       component: () => import('../views/SpecView.vue'),

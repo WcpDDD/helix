@@ -33,6 +33,35 @@ public class GitlabRepositoryClient {
 		return defaultBranch(accessToken, origin, project);
 	}
 
+	public List<RecentCommit> recentCommits(String accessToken, String gitHost, String owner, String repo, String branch) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		String url = origin + "/api/v4/projects/" + project + "/repository/commits?per_page=10";
+		if (branch != null && !branch.isBlank()) {
+			url += "&ref_name=" + encoded(branch);
+		}
+		try {
+			RecentCommit[] payload = http.get()
+					.uri(URI.create(url))
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(RecentCommit[].class);
+			if (payload == null) {
+				return List.of();
+			}
+			List<RecentCommit> commits = new ArrayList<>();
+			for (RecentCommit commit : payload) {
+				if (commit != null && commit.sha() != null && !commit.sha().isBlank()) {
+					commits.add(commit);
+				}
+			}
+			return List.copyOf(commits);
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
 	public String commitSha(String accessToken, String gitHost, String owner, String repo, String ref) {
 		String origin = origin(gitHost);
 		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
@@ -155,6 +184,11 @@ public class GitlabRepositoryClient {
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	private record ProjectPayload(@JsonProperty("default_branch") String defaultBranch) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	public record RecentCommit(@JsonProperty("short_id") String sha, String title,
+			@JsonProperty("author_name") String authorName, @JsonProperty("committed_date") String committedDate) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

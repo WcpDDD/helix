@@ -32,6 +32,10 @@ public final class BoardFile {
 		return EMPTY;
 	}
 
+	public List<Integer> mains() {
+		return List.copyOf(childrenByMain.keySet());
+	}
+
 	public boolean isChild(int number) {
 		return children.contains(number);
 	}

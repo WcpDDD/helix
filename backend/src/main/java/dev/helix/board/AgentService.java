@@ -18,6 +18,13 @@ public class AgentService {
 	}
 
 	@Transactional(readOnly = true)
+	public AgentView require(ProjectEntity project, long id) {
+		AgentEntity agent = agents.findByIdAndProject_Id(id, project.getId())
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+		return view(agent);
+	}
+
+	@Transactional(readOnly = true)
 	public List<AgentView> list(ProjectEntity project) {
 		return agents.findByProject_IdOrderByNameAsc(project.getId()).stream().map(AgentService::view).toList();
 	}

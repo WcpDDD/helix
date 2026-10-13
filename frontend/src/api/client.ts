@@ -35,6 +35,46 @@ export function fetchCurrentProject(): Promise<Project> {
   return getJson<Project>('/api/projects/current')
 }
 
+export interface WorkCommit {
+  sha: string
+  subject: string
+  author: string
+  at: string
+}
+
+export interface WorkSnapshot {
+  branch: string
+  directory: string
+  push: string
+  pushError: string
+  commits: WorkCommit[]
+  ahead: number
+  behind: number
+  dirty: boolean
+}
+
+export async function fetchProjectWork(): Promise<WorkSnapshot> {
+  return workRequest('/api/projects/current/work', 'GET')
+}
+
+export function pullProjectWork(): Promise<WorkSnapshot> {
+  return workRequest('/api/projects/current/work/pull', 'POST')
+}
+
+export function pushProjectWork(): Promise<WorkSnapshot> {
+  return workRequest('/api/projects/current/work/push', 'POST')
+}
+
+async function workRequest(path: string, method: string): Promise<WorkSnapshot> {
+  const response = await fetch(path, { method })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    const detail = body && typeof body.detail === 'string' ? body.detail : ''
+    throw new Error(detail || '工作目录没有准备好。')
+  }
+  return response.json() as Promise<WorkSnapshot>
+}
+
 export async function selectProject(id: number): Promise<Project> {
   const response = await fetch('/api/projects/current', {
     method: 'PUT',
@@ -42,7 +82,9 @@ export async function selectProject(id: number): Promise<Project> {
     body: JSON.stringify({ id }),
   })
   if (!response.ok) {
-    throw new Error('项目没有切换。')
+    const body = await response.json().catch(() => null)
+    const detail = body && typeof body.detail === 'string' ? body.detail : ''
+    throw new Error(detail || '项目没有切换。')
   }
   return response.json() as Promise<Project>
 }
@@ -139,6 +181,17 @@ export interface AgentDraft {
 
 export function fetchAgents(): Promise<AgentRecord[]> {
   return fetchIssueJson<AgentRecord[]>('/api/agents')
+}
+
+export interface WorkerRecord {
+  id: string
+  name: string
+  alive: boolean
+  lastHeartbeat: string
+}
+
+export function fetchWorkers(): Promise<WorkerRecord[]> {
+  return getJson<WorkerRecord[]>('/api/workers')
 }
 
 export async function createAgent(draft: AgentDraft): Promise<AgentRecord> {
@@ -295,7 +348,11 @@ async function fetchIssueJson<T>(path: string): Promise<T> {
     throw error
   }
   if (!response.ok) {
-    throw new Error(`${path} returned ${response.status}`)
+    const body = await response.json().catch(() => null)
+    const detail = body && typeof body.detail === 'string' ? body.detail : ''
+    const error = new Error(detail || `${path} returned ${response.status}`)
+    if (detail.includes('还在准备')) error.name = 'WorkspacePreparing'
+    throw error
   }
   return response.json() as Promise<T>
 }

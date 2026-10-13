@@ -6,6 +6,7 @@ import dev.helix.board.ProjectRepository;
 import dev.helix.gitlab.GitlabIssueException;
 import dev.helix.gitlab.GitlabProjectClient;
 import dev.helix.gitlab.GitlabProjectRef;
+import dev.helix.work.ProjectWorkspaces;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -40,6 +41,9 @@ class ProjectApiTests {
 
 	@MockitoBean
 	private GitlabProjectClient gitlab;
+
+	@MockitoBean
+	private ProjectWorkspaces workspaces;
 
 	@Test
 	void healthReportsOk() throws Exception {

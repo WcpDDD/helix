@@ -6,9 +6,9 @@ import java.util.List;
 
 import dev.helix.gitlab.GitlabIssueClient;
 import dev.helix.gitlab.GitlabIssueException;
-import dev.helix.gitlab.GitlabRepositoryClient;
 import dev.helix.gitlab.IssueSpecText;
 import dev.helix.gitlab.IssueSpecText.SpecLinks;
+import dev.helix.work.ProjectWorkspaces;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -21,12 +21,12 @@ public class WorkspaceSpecService {
 
 	private final GitlabIssueClient gitlab;
 
-	private final GitlabRepositoryClient repository;
+	private final ProjectWorkspaces workspaces;
 
-	public WorkspaceSpecService(IssueRepository issues, GitlabIssueClient gitlab, GitlabRepositoryClient repository) {
+	public WorkspaceSpecService(IssueRepository issues, GitlabIssueClient gitlab, ProjectWorkspaces workspaces) {
 		this.issues = issues;
 		this.gitlab = gitlab;
-		this.repository = repository;
+		this.workspaces = workspaces;
 	}
 
 	public SpecCheckout checkout(String accessToken, long projectId, int number) {
@@ -41,71 +41,29 @@ public class WorkspaceSpecService {
 		catch (IllegalArgumentException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
 		}
+		var root = workspaces.require(project, accessToken);
+		String branch = workspaces.branch(root);
 		if (links.paths().isEmpty()) {
-			return new SpecCheckout(links.branch() == null ? "" : links.branch(), "", List.of());
+			return new SpecCheckout(branch, "", List.of());
 		}
-		String branch = links.branch();
-		if (branch == null || branch.isBlank()) {
-			branch = repository.defaultBranch(accessToken, project.getGitHost(), project.getGitOwner(),
-					project.getGitRepo());
-		}
-		String sha = readCommit(accessToken, project, branch);
 		List<SpecCheckout.SpecFile> files = new ArrayList<>();
 		for (String path : links.paths()) {
-			for (String file : filesAt(accessToken, project, branch, path)) {
-				String markdown = readFile(accessToken, project, file, branch);
-				files.add(new SpecCheckout.SpecFile(file, markdown));
+			List<String> markdown = workspaces.markdownUnder(root, path);
+			if (markdown.isEmpty()) {
+				throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+			}
+			for (String file : markdown) {
+				files.add(new SpecCheckout.SpecFile(file, workspaces.read(root, file)));
 			}
 		}
 		files.sort(Comparator.comparing(SpecCheckout.SpecFile::path));
-		return new SpecCheckout(branch, sha.length() <= 7 ? sha : sha.substring(0, 7), List.copyOf(files));
-	}
-
-	private List<String> filesAt(String accessToken, ProjectEntity project, String branch, String path) {
-		try {
-			List<String> blobs = repository.blobs(accessToken, project.getGitHost(), project.getGitOwner(),
-					project.getGitRepo(), path, branch);
-			if (blobs == null) {
-				return List.of(path);
-			}
-			List<String> markdown = blobs.stream().filter(item -> item.endsWith(".md")).toList();
-			if (!markdown.isEmpty()) {
-				return markdown;
-			}
-			if (path.endsWith(".md")) {
-				return List.of(path);
-			}
-			throw new ResponseStatusException(HttpStatus.NOT_FOUND);
-		}
-		catch (GitlabIssueException exception) {
-			throw failure(exception);
-		}
+		return new SpecCheckout(branch, workspaces.head(root), List.copyOf(files));
 	}
 
 	private String readDescription(String accessToken, ProjectEntity project, int number) {
 		try {
 			return gitlab.description(accessToken, project.getGitHost(), project.getGitOwner(), project.getGitRepo(),
 					number);
-		}
-		catch (GitlabIssueException exception) {
-			throw failure(exception);
-		}
-	}
-
-	private String readCommit(String accessToken, ProjectEntity project, String branch) {
-		try {
-			return repository.commitSha(accessToken, project.getGitHost(), project.getGitOwner(), project.getGitRepo(),
-					branch);
-		}
-		catch (GitlabIssueException exception) {
-			throw failure(exception);
-		}
-	}
-
-	private String readFile(String accessToken, ProjectEntity project, String path, String branch) {
-		try {
-			return repository.fileAt(accessToken, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), path,
-					branch);
 		}
 		catch (GitlabIssueException exception) {
 			throw failure(exception);

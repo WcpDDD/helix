@@ -59,10 +59,11 @@ public class AgentController {
 		agents.delete(currentProject.resolve(session), id);
 	}
 
-	private static void requireUser(HttpSession session) {
-		if (session == null || !(session.getAttribute(AuthController.SESSION_USER) instanceof GitlabUser)) {
+	private static GitlabUser requireUser(HttpSession session) {
+		if (session == null || !(session.getAttribute(AuthController.SESSION_USER) instanceof GitlabUser user)) {
 			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
 		}
+		return user;
 	}
 
 }

@@ -8,16 +8,6 @@ import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 
-interface AgentRepository extends JpaRepository<AgentEntity, Long> {
-
-	List<AgentEntity> findByProject_IdOrderByNameAsc(Long projectId);
-
-	Optional<AgentEntity> findByIdAndProject_Id(Long id, Long projectId);
-
-	boolean existsByProject_IdAndName(Long projectId, String name);
-
-}
-
 interface MemberLabelRepository extends JpaRepository<MemberLabelEntity, Long> {
 
 	List<MemberLabelEntity> findByProject_IdOrderByIdAsc(Long projectId);
@@ -62,47 +52,6 @@ interface MemberTeamRepository extends JpaRepository<MemberTeamEntity, Long> {
 interface TaskRepository extends JpaRepository<TaskEntity, Long> {
 
 	List<TaskEntity> findByProject_IdOrderByIdAsc(Long projectId);
-
-}
-
-interface IssueRepository extends JpaRepository<IssueEntity, Long> {
-
-	long countByProject_Id(Long projectId);
-
-	@Query("""
-			select issue from IssueEntity issue
-			join fetch issue.task
-			join fetch issue.author
-			join fetch issue.owner
-			where issue.task.id in :taskIds
-			order by issue.gitIssueNumber
-			""")
-	List<IssueEntity> findForTasks(Collection<Long> taskIds);
-
-	@Query("""
-			select issue from IssueEntity issue
-			join fetch issue.project
-			where issue.gitIssueNumber = :number
-			""")
-	Optional<IssueEntity> findByGitIssueNumber(int number);
-
-	@Query("""
-			select issue from IssueEntity issue
-			join fetch issue.project
-			where issue.project.id = :projectId and issue.gitIssueNumber = :number
-			""")
-	Optional<IssueEntity> findInProject(Long projectId, int number);
-
-	@Query("""
-			select issue from IssueEntity issue
-			join fetch issue.task
-			join fetch issue.author
-			join fetch issue.owner
-			join fetch issue.project
-			where issue.project.id = :projectId
-			order by issue.gitIssueNumber
-			""")
-	List<IssueEntity> findForProject(Long projectId);
 
 }
 
