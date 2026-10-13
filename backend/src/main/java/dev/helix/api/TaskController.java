@@ -1,11 +1,8 @@
 package dev.helix.api;
 
-import java.io.IOException;
-import java.nio.file.Files;
 import java.util.List;
 
 import dev.helix.auth.AuthController;
-import dev.helix.board.BoardFile;
 import dev.helix.board.CurrentProject;
 import dev.helix.board.SpecCheckout;
 import dev.helix.board.TaskBoardService;
@@ -13,7 +10,6 @@ import dev.helix.board.TaskStatusService;
 import dev.helix.board.TaskView;
 import dev.helix.board.WorkspaceBoard;
 import dev.helix.board.WorkspaceSpecService;
-import dev.helix.work.ProjectWorkspaces;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -39,36 +35,25 @@ public class TaskController {
 
 	private final WorkspaceBoard boards;
 
-	private final ProjectWorkspaces workspaces;
-
 	private final CurrentProject currentProject;
 
 	public TaskController(TaskBoardService taskBoardService, TaskStatusService taskStatusService,
-			WorkspaceSpecService specs, WorkspaceBoard boards, ProjectWorkspaces workspaces,
-			CurrentProject currentProject) {
+			WorkspaceSpecService specs, WorkspaceBoard boards, CurrentProject currentProject) {
 		this.taskBoardService = taskBoardService;
 		this.taskStatusService = taskStatusService;
 		this.specs = specs;
 		this.boards = boards;
-		this.workspaces = workspaces;
 		this.currentProject = currentProject;
 	}
 
 	@GetMapping("/tasks")
 	public List<TaskView> list(HttpSession session) {
 		var project = currentProject.resolve(session);
-		if (boards.pinnedFile()) {
+		if (boards.pinnedClasspath()) {
 			return taskBoardService.list(project.getId());
 		}
-		var root = workspaces.await(project, token(session));
-		String yaml;
-		try {
-			yaml = Files.readString(root.resolve("board.yaml"));
-		}
-		catch (IOException exception) {
-			yaml = "";
-		}
-		return taskBoardService.listCheckout(project, BoardFile.parse(yaml), token(session));
+		String accessToken = token(session);
+		return taskBoardService.listCheckout(project, boards.structure(project, accessToken), accessToken);
 	}
 
 	@GetMapping("/tasks/{code}/spec")

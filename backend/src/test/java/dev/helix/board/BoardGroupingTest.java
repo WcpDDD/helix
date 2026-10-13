@@ -32,6 +32,7 @@ class BoardGroupingTest {
 
 	@Test
 	void groupsFollowTheWorkspaceFile() throws Exception {
+		when(boards.pinnedClasspath()).thenReturn(true);
 		when(boards.current(anyLong())).thenReturn(BoardFile.parse("""
 				version: 1
 				tasks:

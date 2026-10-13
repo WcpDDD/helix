@@ -48,8 +48,18 @@ public class WorkspaceBoard {
 		this.workspaces = workspaces;
 	}
 
-	public boolean pinnedFile() {
-		return location() != null;
+	public boolean pinnedClasspath() {
+		String location = location();
+		return location != null && location.startsWith("classpath:");
+	}
+
+	public BoardFile structure(ProjectEntity project, String token) {
+		String location = location();
+		if (location != null) {
+			return readLocal(location);
+		}
+		Path directory = workspaces.await(project, token);
+		return readCheckout(directory.resolve(FILE));
 	}
 
 	public BoardFile current(long projectId) {

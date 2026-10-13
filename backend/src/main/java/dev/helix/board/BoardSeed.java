@@ -12,6 +12,8 @@ import java.util.Map;
 
 import tools.jackson.databind.ObjectMapper;
 
+import dev.helix.config.HelixProperties;
+
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.core.io.ClassPathResource;
@@ -25,6 +27,7 @@ public class BoardSeed implements ApplicationRunner {
 
 	private static final String UNSTATED_BLAST = "GitLab issue 没有写爆炸半径。";
 
+	private final HelixProperties properties;
 	private final ObjectMapper json;
 	private final ProjectRepository projects;
 	private final MemberRepository members;
@@ -33,8 +36,10 @@ public class BoardSeed implements ApplicationRunner {
 	private final IssueMergeRequestRepository mergeRequests;
 	private final IssueEdgeRepository edges;
 
-	public BoardSeed(ObjectMapper json, ProjectRepository projects, MemberRepository members, TaskRepository tasks,
-			IssueRepository issues, IssueMergeRequestRepository mergeRequests, IssueEdgeRepository edges) {
+	public BoardSeed(HelixProperties properties, ObjectMapper json, ProjectRepository projects, MemberRepository members,
+			TaskRepository tasks, IssueRepository issues, IssueMergeRequestRepository mergeRequests,
+			IssueEdgeRepository edges) {
+		this.properties = properties;
 		this.json = json;
 		this.projects = projects;
 		this.members = members;
@@ -47,6 +52,10 @@ public class BoardSeed implements ApplicationRunner {
 	@Override
 	@Transactional
 	public void run(ApplicationArguments args) throws IOException {
+		String location = properties.boardFile();
+		if (location == null || !location.startsWith("classpath:")) {
+			return;
+		}
 		if (tasks.count() > 0) {
 			return;
 		}
