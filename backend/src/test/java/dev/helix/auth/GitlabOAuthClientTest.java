@@ -49,7 +49,29 @@ class GitlabOAuthClientTest {
 		assertThat(login.user().name()).isEqualTo("Ada");
 		assertThat(login.user().avatarUrl()).isEqualTo("https://hackers.oalite.com/a.png");
 		assertThat(login.accessToken()).isEqualTo("tok");
+		assertThat(login.refreshToken()).isNull();
 		assertThat(login.user().toString()).doesNotContain("tok");
+		server.verify();
+	}
+
+	@Test
+	void refreshReplacesTheAccessToken() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitlabOAuthClient client = client(builder);
+		server.expect(requestTo("https://hackers.oalite.com/oauth/token"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(content().string(containsString("grant_type=refresh_token")))
+				.andExpect(content().string(containsString("refresh_token=old")))
+				.andRespond(withSuccess(
+						"{\"access_token\":\"next\",\"refresh_token\":\"newer\",\"expires_in\":7200,\"created_at\":1000}",
+						MediaType.APPLICATION_JSON));
+
+		GitlabLogin login = client.refresh("old");
+
+		assertThat(login.accessToken()).isEqualTo("next");
+		assertThat(login.refreshToken()).isEqualTo("newer");
+		assertThat(login.expiresAt()).isEqualTo(1000L * 1000 + 7200L * 1000);
 		server.verify();
 	}
 

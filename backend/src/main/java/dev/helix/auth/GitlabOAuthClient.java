@@ -51,7 +51,47 @@ public class GitlabOAuthClient {
 		}
 		String name = profile.name() == null || profile.name().isBlank() ? profile.username() : profile.name();
 		return new GitlabLogin(new GitlabUser(profile.id(), profile.username(), name, profile.avatarUrl()),
-				token.accessToken());
+				token.accessToken(), token.refreshToken(), expiresAt(token));
+	}
+
+	public GitlabLogin refresh(String refreshToken) {
+		if (refreshToken == null || refreshToken.isBlank()) {
+			throw new GitlabOAuthException("GitLab 登录已经过期");
+		}
+		LinkedMultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+		form.add("client_id", gitlab.clientId());
+		form.add("client_secret", gitlab.clientSecret());
+		form.add("refresh_token", refreshToken);
+		form.add("grant_type", "refresh_token");
+		TokenPayload token;
+		try {
+			token = http.post()
+					.uri(gitlab.origin() + "/oauth/token")
+					.contentType(MediaType.APPLICATION_FORM_URLENCODED)
+					.body(form)
+					.retrieve()
+					.body(TokenPayload.class);
+		}
+		catch (RestClientResponseException exception) {
+			throw new GitlabOAuthException(errorMessage(exception), exception);
+		}
+		catch (RestClientException exception) {
+			throw new GitlabOAuthException("连不上 GitLab", exception);
+		}
+		if (token == null || token.accessToken() == null || token.accessToken().isBlank()) {
+			throw new GitlabOAuthException("GitLab 没有返回访问令牌");
+		}
+		String nextRefresh = token.refreshToken() == null || token.refreshToken().isBlank() ? refreshToken
+				: token.refreshToken();
+		return new GitlabLogin(null, token.accessToken(), nextRefresh, expiresAt(token));
+	}
+
+	private static long expiresAt(TokenPayload token) {
+		if (token.expiresIn() == null || token.expiresIn() <= 0) {
+			return 0;
+		}
+		long createdMillis = token.createdAt() == null ? System.currentTimeMillis() : token.createdAt() * 1000;
+		return createdMillis + token.expiresIn() * 1000;
 	}
 
 	private TokenPayload requestToken(String code) {
@@ -107,7 +147,9 @@ public class GitlabOAuthClient {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	private record TokenPayload(@JsonProperty("access_token") String accessToken) {
+	private record TokenPayload(@JsonProperty("access_token") String accessToken,
+			@JsonProperty("refresh_token") String refreshToken, @JsonProperty("expires_in") Long expiresIn,
+			@JsonProperty("created_at") Long createdAt) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

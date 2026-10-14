@@ -143,8 +143,15 @@ export async function saveProject(id: number, name: string, path: string): Promi
   return response.json() as Promise<Project>
 }
 
-export function fetchTasks(): Promise<Task[]> {
-  return getJson<Task[]>('/api/tasks')
+export async function fetchTasks(): Promise<Task[]> {
+  const response = await fetch('/api/tasks')
+  if (response.status === 401) {
+    throw new Error('需要重新登录。')
+  }
+  if (!response.ok) {
+    throw new Error(`/api/tasks returned ${response.status}`)
+  }
+  return response.json() as Promise<Task[]>
 }
 
 export interface SkillEntry {

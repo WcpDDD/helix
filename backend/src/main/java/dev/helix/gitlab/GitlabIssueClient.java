@@ -11,12 +11,17 @@ import java.util.Map;
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 public class GitlabIssueClient {
+
+	private static final Logger log = LoggerFactory.getLogger(GitlabIssueClient.class);
 
 	private final RestClient http;
 
@@ -86,9 +91,7 @@ public class GitlabIssueClient {
 						.body(HeadPayload[].class);
 				if (payload != null) {
 					for (HeadPayload issue : payload) {
-						found.put(issue.iid(), new IssueHead(issue.iid(), text(issue.title()),
-								issue.description() == null ? "" : issue.description(), person(issue.author()),
-								person(first(issue.assignees()))));
+						found.put(issue.iid(), head(issue));
 					}
 				}
 			}
@@ -98,6 +101,50 @@ public class GitlabIssueClient {
 			throw failed(exception);
 		}
 	}
+
+	public List<IssueHead> issues(String accessToken, String gitHost, String owner, String repo) {
+		return issues(accessToken, gitHost, owner, repo, 500);
+	}
+
+	List<IssueHead> issues(String accessToken, String gitHost, String owner, String repo, int limit) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		List<IssueHead> found = new ArrayList<>();
+		int page = 1;
+		int cap = Math.max(limit, 0);
+		try {
+			for (int guard = 0; guard < 50 && found.size() < cap; guard++) {
+				ResponseEntity<HeadPayload[]> response = http.get()
+						.uri(URI.create(origin + "/api/v4/projects/" + project
+								+ "/issues?state=all&per_page=100&page=" + page))
+						.header("Authorization", "Bearer " + accessToken)
+						.retrieve()
+						.toEntity(HeadPayload[].class);
+				HeadPayload[] batch = response.getBody();
+				if (batch != null) {
+					for (HeadPayload issue : batch) {
+						if (found.size() >= cap) {
+							break;
+						}
+						found.add(head(issue));
+					}
+				}
+				if (found.size() >= cap) {
+					break;
+				}
+				String next = response.getHeaders().getFirst("X-Next-Page");
+				if (next == null || next.isBlank()) {
+					break;
+				}
+				page = Integer.parseInt(next);
+			}
+			return found;
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
 	public Map<Integer, String> descriptions(String accessToken, String gitHost, String owner, String repo,
 			List<Integer> iids) {
 		Map<Integer, String> found = new LinkedHashMap<>();
@@ -169,10 +216,22 @@ public class GitlabIssueClient {
 		}
 	}
 
+	private static IssueHead head(HeadPayload issue) {
+		return new IssueHead(issue.iid(), text(issue.title()),
+				issue.description() == null ? "" : issue.description(), person(issue.author()),
+				person(first(issue.assignees())), text(issue.state()));
+	}
+
 	private static GitlabIssueException failed(RestClientException exception) {
 		if (exception instanceof RestClientResponseException response) {
+			String body = response.getResponseBodyAsString();
+			if (body != null && body.length() > 180) {
+				body = body.substring(0, 180);
+			}
+			log.warn("GitLab 返回 {}: {}", response.getStatusCode().value(), body);
 			return new GitlabIssueException(response.getStatusCode().value());
 		}
+		log.warn("GitLab 没有连上: {}", exception.toString());
 		return new GitlabIssueException(502);
 	}
 
@@ -214,10 +273,11 @@ public class GitlabIssueClient {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	private record HeadPayload(int iid, String title, String description, Author author, Author[] assignees) {
+	private record HeadPayload(int iid, String title, String description, String state, Author author,
+			Author[] assignees) {
 	}
 
-	public record IssueHead(int iid, String title, String description, String author, String assignee) {
+	public record IssueHead(int iid, String title, String description, String author, String assignee, String state) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

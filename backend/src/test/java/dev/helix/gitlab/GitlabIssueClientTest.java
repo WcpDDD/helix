@@ -73,6 +73,49 @@ class GitlabIssueClientTest {
 	}
 
 	@Test
+	void listsEveryIssueAndFollowsTheNextPage() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitlabIssueClient client = new GitlabIssueClient(builder.build());
+		String issues = "https://hackers.oalite.com/api/v4/projects/qingflow-develop%2Fqingflow-workspace/issues?state=all&per_page=100&page=";
+		server.expect(requestTo(issues + "1"))
+				.andExpect(method(HttpMethod.GET))
+				.andExpect(header("Authorization", "Bearer tok"))
+				.andRespond(withSuccess("""
+						[{"iid":21,"title":"主任务","description":"<!-- helix -->\\n状态：实现中\\n<!-- /helix -->","state":"opened","author":{"username":"ada"},"assignees":[{"name":"陈"}]}]
+						""", MediaType.APPLICATION_JSON).header("X-Next-Page", "2"));
+		server.expect(requestTo(issues + "2"))
+				.andRespond(withSuccess("""
+						[{"iid":36,"title":"已关闭的","description":"","state":"closed","author":{"username":"bea"},"assignees":[]}]
+						""", MediaType.APPLICATION_JSON));
+
+		assertThat(client.issues("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace"))
+				.containsExactly(
+						new GitlabIssueClient.IssueHead(21, "主任务", "<!-- helix -->\n状态：实现中\n<!-- /helix -->", "ada", "陈",
+								"opened"),
+						new GitlabIssueClient.IssueHead(36, "已关闭的", "", "bea", "", "closed"));
+		server.verify();
+	}
+
+	@Test
+	void stopsAtTheIssueLimit() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitlabIssueClient client = new GitlabIssueClient(builder.build());
+		String issues = "https://hackers.oalite.com/api/v4/projects/qingflow-develop%2Fqingflow-workspace/issues?state=all&per_page=100&page=";
+		server.expect(requestTo(issues + "1"))
+				.andRespond(withSuccess("""
+						[{"iid":21,"title":"第一条","description":"","state":"opened","author":{"username":"ada"}},
+						{"iid":22,"title":"第二条","description":"","state":"opened","author":{"username":"bea"}}]
+						""", MediaType.APPLICATION_JSON).header("X-Next-Page", "2"));
+
+		assertThat(client.issues("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 1))
+				.extracting(GitlabIssueClient.IssueHead::iid)
+				.containsExactly(21);
+		server.verify();
+	}
+
+	@Test
 	void unauthorizedKeepsTheStatus() {
 		assertStatus(withUnauthorizedRequest(), 401);
 	}

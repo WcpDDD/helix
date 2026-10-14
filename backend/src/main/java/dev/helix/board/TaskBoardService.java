@@ -3,8 +3,10 @@ package dev.helix.board;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import dev.helix.gitlab.GitlabIssueClient;
 import dev.helix.gitlab.GitlabIssueException;
@@ -86,14 +88,9 @@ public class TaskBoardService {
 	}
 
 	public List<TaskView> listCheckout(ProjectEntity project, BoardFile board, String token) {
-		List<Integer> numbers = new ArrayList<>();
-		for (int main : board.mains()) {
-			numbers.add(main);
-			numbers.addAll(board.childrenOf(main));
-		}
-		Map<Integer, GitlabIssueClient.IssueHead> heads;
+		List<GitlabIssueClient.IssueHead> heads;
 		try {
-			heads = gitlab.heads(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), numbers);
+			heads = gitlab.issues(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo());
 		}
 		catch (GitlabIssueException exception) {
 			if (exception.status() == 401 || exception.status() == 403) {
@@ -101,27 +98,54 @@ public class TaskBoardService {
 			}
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "任务没有从主分支对应的 issue 读到。");
 		}
+		return arrange(project, board, heads);
+	}
+
+	static List<TaskView> arrange(ProjectEntity project, BoardFile board, List<GitlabIssueClient.IssueHead> heads) {
+		Map<Integer, GitlabIssueClient.IssueHead> byNumber = new LinkedHashMap<>();
+		for (GitlabIssueClient.IssueHead head : heads) {
+			byNumber.putIfAbsent(head.iid(), head);
+		}
+		Set<Integer> shown = new LinkedHashSet<>();
 		List<TaskView> views = new ArrayList<>();
 		for (int main : board.mains()) {
-			GitlabIssueClient.IssueHead head = heads.get(main);
-			String description = head == null ? "" : head.description();
-			String status = declaredStatus(description);
-			String stage = declaredStage(description, status);
-			List<TaskView.ChildIssueView> children = new ArrayList<>();
-			for (int childNumber : board.childrenOf(main)) {
-				children.add(childFromHead(project, childNumber, heads.get(childNumber)));
+			if (board.isChild(main) || !byNumber.containsKey(main) || !shown.add(main)) {
+				continue;
 			}
-			List<TaskView.EdgeView> edges = new ArrayList<>();
-			for (BoardFile.Edge edge : board.edgesOf(main)) {
-				String from = Integer.toString(edge.from());
-				String to = Integer.toString(edge.to());
-				edges.add(new TaskView.EdgeView(from + "-" + to, from, to, edge.needsContract(), edge.contractRef()));
+			views.add(taskFromHead(project, main, byNumber.get(main), board, byNumber));
+		}
+		List<Integer> loose = new ArrayList<>();
+		for (int number : byNumber.keySet()) {
+			if (!board.isChild(number) && shown.add(number)) {
+				loose.add(number);
 			}
-			views.add(new TaskView(Integer.toString(main), titleOf(main, head), ownerOf(head), status, stage, null, null,
-					null, summaryFromHead(project, main, head), children, edges));
+		}
+		for (int number : loose) {
+			views.add(taskFromHead(project, number, byNumber.get(number), BoardFile.empty(), byNumber));
 		}
 		views.sort(Comparator.comparingInt((TaskView view) -> Integer.parseInt(view.code())).reversed());
 		return views;
+	}
+
+	private static TaskView taskFromHead(ProjectEntity project, int number, GitlabIssueClient.IssueHead head,
+			BoardFile board, Map<Integer, GitlabIssueClient.IssueHead> byNumber) {
+		String status = statusOf(head);
+		String stage = declaredStage(head == null ? "" : head.description(), status);
+		List<TaskView.ChildIssueView> children = new ArrayList<>();
+		for (int childNumber : board.childrenOf(number)) {
+			GitlabIssueClient.IssueHead child = byNumber.get(childNumber);
+			if (child != null) {
+				children.add(childFromHead(project, childNumber, child));
+			}
+		}
+		List<TaskView.EdgeView> edges = new ArrayList<>();
+		for (BoardFile.Edge edge : board.edgesOf(number)) {
+			String from = Integer.toString(edge.from());
+			String to = Integer.toString(edge.to());
+			edges.add(new TaskView.EdgeView(from + "-" + to, from, to, edge.needsContract(), edge.contractRef()));
+		}
+		return new TaskView(Integer.toString(number), titleOf(number, head), ownerOf(head), status, stage, null, null,
+				null, summaryFromHead(project, number, head), children, edges);
 	}
 
 	private TaskView.IssueSummary summary(IssueEntity issue, Map<Long, List<TaskView.MergeRequestView>> requests,
@@ -163,15 +187,17 @@ public class TaskBoardService {
 		return issueUrl(issue.getProject(), issue.getGitIssueNumber());
 	}
 
-	private TaskView.ChildIssueView childFromHead(ProjectEntity project, int number, GitlabIssueClient.IssueHead head) {
+	private static TaskView.ChildIssueView childFromHead(ProjectEntity project, int number,
+			GitlabIssueClient.IssueHead head) {
 		String description = head == null ? "" : head.description();
-		String status = declaredStatus(description);
+		String status = statusOf(head);
 		return new TaskView.ChildIssueView(Integer.toString(number), issueUrl(project, number), titleOf(number, head),
 				status, declaredStage(description, status), ownerOf(head), "", authorOf(head), "", "", "", "", "",
 				List.of(), List.of());
 	}
 
-	private TaskView.IssueSummary summaryFromHead(ProjectEntity project, int number, GitlabIssueClient.IssueHead head) {
+	private static TaskView.IssueSummary summaryFromHead(ProjectEntity project, int number,
+			GitlabIssueClient.IssueHead head) {
 		return new TaskView.IssueSummary(issueUrl(project, number), "", authorOf(head), "", "", "", "", "", List.of(),
 				List.of());
 	}
@@ -197,9 +223,15 @@ public class TaskBoardService {
 		return head == null ? "" : head.author();
 	}
 
-	private static String declaredStatus(String description) {
-		String status = IssueStatusText.statusOf(description);
-		return status != null && IssueStatusText.STATUSES.contains(status) ? status : "提案中";
+	private static String statusOf(GitlabIssueClient.IssueHead head) {
+		String declared = head == null ? null : IssueStatusText.statusOf(head.description());
+		if (declared != null && IssueStatusText.STATUSES.contains(declared)) {
+			return declared;
+		}
+		if (head != null && "closed".equalsIgnoreCase(head.state())) {
+			return "已关闭";
+		}
+		return "提案中";
 	}
 
 	private static String declaredStage(String description, String status) {

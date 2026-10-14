@@ -3,6 +3,7 @@ package dev.helix.api;
 import java.util.List;
 
 import dev.helix.auth.AuthController;
+import dev.helix.auth.GitlabSessionToken;
 import dev.helix.board.CurrentProject;
 import dev.helix.board.SpecCheckout;
 import dev.helix.board.TaskBoardService;
@@ -37,13 +38,17 @@ public class TaskController {
 
 	private final CurrentProject currentProject;
 
+	private final GitlabSessionToken tokens;
+
 	public TaskController(TaskBoardService taskBoardService, TaskStatusService taskStatusService,
-			WorkspaceSpecService specs, WorkspaceBoard boards, CurrentProject currentProject) {
+			WorkspaceSpecService specs, WorkspaceBoard boards, CurrentProject currentProject,
+			GitlabSessionToken tokens) {
 		this.taskBoardService = taskBoardService;
 		this.taskStatusService = taskStatusService;
 		this.specs = specs;
 		this.boards = boards;
 		this.currentProject = currentProject;
+		this.tokens = tokens;
 	}
 
 	@GetMapping("/tasks")
@@ -52,8 +57,17 @@ public class TaskController {
 		if (boards.pinnedClasspath()) {
 			return taskBoardService.list(project.getId());
 		}
-		String accessToken = token(session);
-		return taskBoardService.listCheckout(project, boards.structure(project, accessToken), accessToken);
+		String accessToken = tokens.require(session);
+		try {
+			return taskBoardService.listCheckout(project, boards.structure(project, accessToken), accessToken);
+		}
+		catch (ResponseStatusException exception) {
+			if (exception.getStatusCode().value() != HttpStatus.UNAUTHORIZED.value()) {
+				throw exception;
+			}
+			String refreshed = tokens.refresh(session);
+			return taskBoardService.listCheckout(project, boards.structure(project, refreshed), refreshed);
+		}
 	}
 
 	@GetMapping("/tasks/{code}/spec")

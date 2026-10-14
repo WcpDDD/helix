@@ -50,9 +50,9 @@ watch(
       if (selectedCode.value && !tasks.value.some((task) => task.code === selectedCode.value)) {
         selectedCode.value = null
       }
-    } catch {
+    } catch (error) {
       tasks.value = []
-      loadError.value = '任务列表没有读到。'
+      loadError.value = error instanceof Error && error.message === '需要重新登录。' ? error.message : '任务列表没有读到。'
     } finally {
       ready.value = true
     }
@@ -138,7 +138,6 @@ function isOverdue(task: Task): boolean {
           </span>
           <span class="rail-desc">{{ task.description }}</span>
           <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
-          <TaskNext :task="task" variant="row" />
         </div>
       </aside>
       <TaskDetail v-if="selected" :task="selected" @close="selectedCode = null" />
@@ -247,8 +246,16 @@ function isOverdue(task: Task): boolean {
 </template>
 
 <style scoped>
+.tasks {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
 .tasks-head {
   display: flex;
+  flex-shrink: 0;
   flex-wrap: wrap;
   align-items: flex-end;
   justify-content: space-between;
@@ -305,6 +312,8 @@ h1 {
 
 .rail {
   overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
   display: grid;
   align-content: start;
   gap: 8px;
@@ -317,6 +326,8 @@ h1 {
 }
 
 .rail-item {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 88px;
   display: grid;
   gap: 6px;
   width: 100%;
@@ -343,8 +354,12 @@ h1 {
 }
 
 .rail-desc {
+  display: -webkit-box;
+  overflow: hidden;
   font-weight: 550;
   line-height: 1.4;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
 }
 
 .issue-count {
@@ -366,7 +381,9 @@ h1 {
 }
 
 .table-wrap {
-  overflow-x: auto;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--surface);
@@ -375,7 +392,8 @@ h1 {
 table {
   width: 100%;
   min-width: 1340px;
-  border-collapse: collapse;
+  border-collapse: separate;
+  border-spacing: 0;
   table-layout: fixed;
 }
 
@@ -420,6 +438,9 @@ td {
 }
 
 th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
   color: var(--muted);
   font-size: 12px;
   font-weight: 600;
@@ -575,9 +596,13 @@ td.date {
 
   .task-cards {
     display: grid;
+    flex: 1;
+    align-content: start;
+    min-height: 0;
     gap: 12px;
     margin: 0;
     padding: 0;
+    overflow: auto;
     list-style: none;
   }
 

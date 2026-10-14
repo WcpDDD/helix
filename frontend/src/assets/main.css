@@ -6,6 +6,7 @@
   padding: 20px 0 56px;
 }
 
+.shell:has(.tasks),
 .shell:has(.split),
 .shell:has(.spec-page),
 .shell:has(.skill-page),

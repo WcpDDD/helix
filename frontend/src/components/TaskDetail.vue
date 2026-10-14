@@ -84,7 +84,7 @@ const environments = computed(() => issueView.value.environments ?? [])
 const issueBody = ref('')
 const issueBodyState = ref<'loading' | 'ready' | 'empty' | 'login' | 'error'>('loading')
 const issueBodyHtml = computed(() => (issueBody.value ? renderMarkdown(issueBody.value) : ''))
-const issueNotes = ref<IssueNote[]>([])
+const issueNotes = ref<Array<IssueNote & { html: string; time: string }>>([])
 const issueNotesState = ref<'loading' | 'ready' | 'empty' | 'login' | 'error'>('loading')
 const notesExpanded = ref(false)
 const hiddenNotes = computed(() => (issueNotes.value.length > 3 ? issueNotes.value.slice(1, -1) : []))
@@ -113,7 +113,11 @@ watch(
     fetchIssueNotes(requestId)
       .then((notes) => {
         if (issueView.value.id !== requestId) return
-        issueNotes.value = notes
+        issueNotes.value = notes.map((note) => ({
+          ...note,
+          html: renderMarkdown(note.body),
+          time: commentTime(note.createdAt),
+        }))
         issueNotesState.value = notes.length > 0 ? 'ready' : 'empty'
       })
       .catch((error: unknown) => {
@@ -352,9 +356,9 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
             <div class="who">
               <span class="avatar">{{ note.author.slice(0, 1) || '·' }}</span>
               <strong>{{ note.author }}</strong>
-              <time :datetime="note.createdAt">{{ commentTime(note.createdAt) }}</time>
+              <time :datetime="note.createdAt">{{ note.time }}</time>
             </div>
-            <div class="issue-body" v-html="renderMarkdown(note.body)" />
+            <div class="issue-body" v-html="note.html" />
           </li>
           <li v-if="hiddenNotes.length > 0" class="fold-row">
             <button type="button" class="fold" @click="notesExpanded = !notesExpanded">
@@ -366,18 +370,18 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
               <div class="who">
                 <span class="avatar">{{ note.author.slice(0, 1) || '·' }}</span>
                 <strong>{{ note.author }}</strong>
-                <time :datetime="note.createdAt">{{ commentTime(note.createdAt) }}</time>
+                <time :datetime="note.createdAt">{{ note.time }}</time>
               </div>
-              <div class="issue-body" v-html="renderMarkdown(note.body)" />
+              <div class="issue-body" v-html="note.html" />
             </li>
           </template>
           <li v-for="note in trailingNotes" :key="note.id" class="comment">
             <div class="who">
               <span class="avatar">{{ note.author.slice(0, 1) || '·' }}</span>
               <strong>{{ note.author }}</strong>
-              <time :datetime="note.createdAt">{{ commentTime(note.createdAt) }}</time>
+              <time :datetime="note.createdAt">{{ note.time }}</time>
             </div>
-            <div class="issue-body" v-html="renderMarkdown(note.body)" />
+            <div class="issue-body" v-html="note.html" />
           </li>
         </ol>
       </section>
@@ -479,6 +483,8 @@ h2 {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overflow-anchor: none;
+  overscroll-behavior: contain;
   padding-top: 18px;
   padding-bottom: 28px;
   scrollbar-width: none;
@@ -838,6 +844,8 @@ h3 {
 
 .comment,
 .merged {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 96px;
   min-width: 0;
   max-width: 100%;
   padding: 12px 14px;

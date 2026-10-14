@@ -34,6 +34,10 @@ public class AuthController {
 
 	public static final String SESSION_TOKEN = "helix.gitlab.accessToken";
 
+	public static final String SESSION_REFRESH = "helix.gitlab.refreshToken";
+
+	public static final String SESSION_EXPIRES = "helix.gitlab.expiresAt";
+
 	private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
 	private final HelixProperties properties;
@@ -83,6 +87,12 @@ public class AuthController {
 			HttpSession signedIn = request.getSession(true);
 			signedIn.setAttribute(SESSION_USER, login.user());
 			signedIn.setAttribute(SESSION_TOKEN, login.accessToken());
+			if (login.refreshToken() != null && !login.refreshToken().isBlank()) {
+				signedIn.setAttribute(SESSION_REFRESH, login.refreshToken());
+			}
+			if (login.expiresAt() > 0) {
+				signedIn.setAttribute(SESSION_EXPIRES, login.expiresAt());
+			}
 			credential.remember(login.accessToken());
 			try {
 				boards.refresh(login.accessToken());
