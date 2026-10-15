@@ -38,6 +38,9 @@ public class AgentEntity {
 	@OrderBy("position")
 	private final List<AgentSkillEntity> skills = new ArrayList<>();
 
+	@Column
+	private String tag;
+
 	protected AgentEntity() {
 	}
 
@@ -67,6 +70,10 @@ public class AgentEntity {
 		return skills;
 	}
 
+	public String getTag() {
+		return tag;
+	}
+
 	public void rename(String name) {
 		this.name = name;
 	}
@@ -80,6 +87,10 @@ public class AgentEntity {
 		for (int index = 0; index < paths.size(); index++) {
 			skills.add(new AgentSkillEntity(this, paths.get(index), index));
 		}
+	}
+
+	public void retag(String tag) {
+		this.tag = tag;
 	}
 
 }

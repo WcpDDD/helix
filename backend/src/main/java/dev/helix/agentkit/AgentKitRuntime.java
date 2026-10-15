@@ -7,21 +7,26 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Flow;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.regex.Pattern;
 
 import io.agentkit.api.execution.Caller;
+import io.agentkit.api.execution.ExecutionChunk;
 import io.agentkit.api.execution.ExecutionEvent;
 import io.agentkit.api.execution.ExecutionRejectedException;
 import io.agentkit.api.execution.Task;
 import io.agentkit.api.execution.WorkspaceOpening;
 import io.agentkit.api.react.ReActConstructor;
+import io.agentkit.api.session.SessionStorage;
 import io.agentkit.execution.env.local.LocalFsEnvProvider;
 import io.agentkit.execution.facade.ExecutionFacade;
 import io.agentkit.execution.meta.EnvPrimitiveTools;
 import io.agentkit.execution.react.DefaultReActConstructor;
+import io.agentkit.execution.session.DefaultSessionService;
 import io.agentkit.infra.llm.OpenAICompatibleBackend;
 import io.agentkit.infra.llm.OpenAICompatibleConfig;
 import io.agentkit.infra.llm.RoutingProvider;
@@ -35,36 +40,33 @@ public class AgentKitRuntime {
 
 	private static final Duration WAIT = Duration.ofMinutes(10);
 
+	private static final Pattern THREAD_ID = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
+
 	private final AgentKitProperties properties;
 
+	private final SessionStorage memory;
+
+	private final Map<String, ExecutionFacade> sessions = new ConcurrentHashMap<>();
+
 	public AgentKitRuntime(AgentKitProperties properties) {
+		this(properties, null);
+	}
+
+	public AgentKitRuntime(AgentKitProperties properties, Path memory) {
 		this.properties = properties;
+		this.memory = SessionMemory.open(memory);
 	}
 
 	public RunResult execute(String systemPrompt, String callerId, String message, Path workspace) {
-		if (!properties.ready()) {
-			throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "AGENTKIT_MODEL 和 AGENTKIT_API_KEY 还没配。");
-		}
-		String prompt = message == null ? "" : message.strip();
-		if (prompt.isEmpty()) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "要说一句让这个 agent 做的事。");
-		}
-		Path root = workspace.toAbsolutePath().normalize();
-		String threadId = UUID.randomUUID().toString();
-		String taskId = UUID.randomUUID().toString();
-		Caller caller = new Caller(callerId, null, null);
-		ExecutionFacade execution = facade(systemPrompt);
-		WorkspaceOpening opening = new WorkspaceOpening(
-				"helix", root.toString(), false, Map.of(), Duration.ofSeconds(60), 256 * 1024, Map.of());
-		CompletableFuture<ExecutionEvent.RunEnded> done = new CompletableFuture<>();
+		return execute(systemPrompt, callerId, message, workspace, Map.of());
+	}
+
+	public RunResult execute(String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv) {
+		Started started = launch(systemPrompt, callerId, message, workspace, userEnv);
 		try {
-			execution.submit(caller, new Task(
-					threadId, taskId, prompt,
-					null, null, null, null, null, null,
-					properties.turns(), null, null, opening));
-			watch(execution, caller, threadId, done);
-			ExecutionEvent.RunEnded ended = done.get(WAIT.toMillis(), TimeUnit.MILLISECONDS);
-			return new RunResult(threadId, ended.phase().name(), ended.assistantText(), ended.failureMessage());
+			ExecutionEvent.RunEnded ended = started.done().get(WAIT.toMillis(), TimeUnit.MILLISECONDS);
+			return new RunResult(started.threadId(), ended.phase().name(), ended.assistantText(), ended.failureMessage());
 		}
 		catch (TimeoutException exception) {
 			throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "这轮跑超时了。");
@@ -79,6 +81,91 @@ public class AgentKitRuntime {
 				throw status;
 			}
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, cause.getMessage());
+		}
+	}
+
+	public void begin(String systemPrompt, String callerId, String message, Path workspace, Map<String, String> userEnv) {
+		begin(systemPrompt, callerId, message, workspace, userEnv, null);
+	}
+
+	public void begin(String systemPrompt, String callerId, String message, Path workspace, Map<String, String> userEnv,
+			RunSink sink) {
+		begin(null, systemPrompt, callerId, message, workspace, userEnv, sink);
+	}
+
+	public void begin(String threadId, String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv, RunSink sink) {
+		Started started = launch(threadId, systemPrompt, callerId, message, workspace, userEnv, sink);
+		Thread thread = new Thread(() -> await(started, sink), "helix-worker-run");
+		thread.setDaemon(true);
+		thread.start();
+	}
+
+	private void await(Started started, RunSink sink) {
+		try {
+			ExecutionEvent.RunEnded ended = started.done().get(WAIT.toMillis(), TimeUnit.MILLISECONDS);
+			System.out.println("任务结束 " + started.threadId() + " " + ended.phase());
+		}
+		catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			System.out.println("任务被打断 " + started.threadId());
+			close(sink, "failed", "这轮被打断了。");
+		}
+		catch (TimeoutException exception) {
+			System.out.println("任务超时 " + started.threadId());
+			close(sink, "failed", "这轮跑超时了。");
+		}
+		catch (ExecutionException exception) {
+			Throwable cause = exception.getCause() == null ? exception : exception.getCause();
+			System.out.println("任务失败 " + started.threadId() + " " + cause.getMessage());
+			close(sink, "failed", cause.getMessage());
+		}
+	}
+
+	private static void close(RunSink sink, String status, String detail) {
+		if (sink == null) {
+			return;
+		}
+		try {
+			sink.onClosed(status, detail);
+		}
+		catch (RuntimeException exception) {
+			System.out.println("会话状态没有写上");
+		}
+	}
+
+	private Started launch(String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv) {
+		return launch(null, systemPrompt, callerId, message, workspace, userEnv, null);
+	}
+
+	private Started launch(String requestedThread, String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv, RunSink sink) {
+		if (!properties.ready()) {
+			throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "AGENTKIT_MODEL 和 AGENTKIT_API_KEY 还没配。");
+		}
+		String prompt = message == null ? "" : message.strip();
+		if (prompt.isEmpty()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "要说一句让这个 agent 做的事。");
+		}
+		Path root = workspace.toAbsolutePath().normalize();
+		String threadId = requestedThread != null && THREAD_ID.matcher(requestedThread).matches()
+				? requestedThread
+				: UUID.randomUUID().toString();
+		String taskId = UUID.randomUUID().toString();
+		Caller caller = new Caller(callerId, null, null);
+		ExecutionFacade execution = facade(systemPrompt);
+		Map<String, String> env = userEnv == null ? Map.of() : Map.copyOf(userEnv);
+		WorkspaceOpening opening = new WorkspaceOpening(
+				"helix", root.toString(), false, env, Duration.ofSeconds(60), 256 * 1024, Map.of());
+		CompletableFuture<ExecutionEvent.RunEnded> done = new CompletableFuture<>();
+		try {
+			execution.submit(caller, new Task(
+					threadId, taskId, prompt,
+					null, null, null, null, null, null,
+					properties.turns(), null, null, opening));
+			watch(execution, caller, threadId, done, sink);
+			return new Started(threadId, done, execution);
 		}
 		catch (ExecutionRejectedException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage());
@@ -99,6 +186,11 @@ public class AgentKitRuntime {
 	}
 
 	private ExecutionFacade facade(String systemPrompt) {
+		String prompt = systemPrompt == null ? "" : systemPrompt;
+		return sessions.computeIfAbsent(prompt, this::open);
+	}
+
+	private ExecutionFacade open(String systemPrompt) {
 		String baseUrl = properties.baseUrl() == null || properties.baseUrl().isBlank()
 				? "https://api.openai.com/v1"
 				: properties.baseUrl().strip();
@@ -108,12 +200,16 @@ public class AgentKitRuntime {
 				new TencentMaasBackend(llmConfig),
 				new OpenAICompatibleBackend(llmConfig)));
 		ReActConstructor constructor = new DefaultReActConstructor(llm, new EnvPrimitiveTools(), List.of());
-		return new ExecutionFacade(constructor, new LocalFsEnvProvider(), properties.model().strip(),
-				systemPrompt == null ? "" : systemPrompt, properties.turns());
+		return new ExecutionFacade(new DefaultSessionService(
+				memory, constructor, properties.model().strip(), systemPrompt, properties.turns(), null,
+				new LocalFsEnvProvider()));
 	}
 
 	private static void watch(ExecutionFacade execution, Caller caller, String threadId,
-			CompletableFuture<ExecutionEvent.RunEnded> done) {
+			CompletableFuture<ExecutionEvent.RunEnded> done, RunSink sink) {
+		if (sink != null) {
+			subscribeChunks(execution, caller, threadId, sink);
+		}
 		execution.events(caller, threadId).subscribe(new Flow.Subscriber<>() {
 			@Override
 			public void onSubscribe(Flow.Subscription subscription) {
@@ -122,6 +218,14 @@ public class AgentKitRuntime {
 
 			@Override
 			public void onNext(ExecutionEvent event) {
+				if (sink != null) {
+					try {
+						sink.onEvent(event);
+					}
+					catch (RuntimeException exception) {
+						System.out.println("会话事件没有写上");
+					}
+				}
 				if (event instanceof ExecutionEvent.RunEnded ended) {
 					done.complete(ended);
 				}
@@ -139,7 +243,52 @@ public class AgentKitRuntime {
 		});
 	}
 
+	private static void subscribeChunks(ExecutionFacade execution, Caller caller, String threadId, RunSink sink) {
+		try {
+			execution.stream(caller, threadId).subscribe(new Flow.Subscriber<>() {
+				@Override
+				public void onSubscribe(Flow.Subscription subscription) {
+					subscription.request(Long.MAX_VALUE);
+				}
+
+				@Override
+				public void onNext(ExecutionChunk chunk) {
+					try {
+						sink.onChunk(chunk);
+					}
+					catch (RuntimeException exception) {
+						System.out.println("会话片段没有写上");
+					}
+				}
+
+				@Override
+				public void onError(Throwable throwable) {
+					System.out.println("会话流中断了");
+				}
+
+				@Override
+				public void onComplete() {
+				}
+			});
+		}
+		catch (RuntimeException exception) {
+			System.out.println("会话流没有接上");
+		}
+	}
+
+	public interface RunSink {
+		void onEvent(ExecutionEvent event);
+
+		void onChunk(ExecutionChunk chunk);
+
+		default void onClosed(String status, String detail) {
+		}
+	}
+
 	public record RunResult(String threadId, String phase, String text, String failure) {
+	}
+
+	private record Started(String threadId, CompletableFuture<ExecutionEvent.RunEnded> done, ExecutionFacade execution) {
 	}
 
 }

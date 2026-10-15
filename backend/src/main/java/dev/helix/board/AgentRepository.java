@@ -13,4 +13,8 @@ public interface AgentRepository extends JpaRepository<AgentEntity, Long> {
 
 	boolean existsByProject_IdAndName(Long projectId, String name);
 
+	boolean existsByProject_IdAndTag(Long projectId, String tag);
+
+	boolean existsByProject_IdAndTagAndIdNot(Long projectId, String tag, Long id);
+
 }

@@ -35,8 +35,11 @@ public class AgentService {
 		if (agents.existsByProject_IdAndName(project.getId(), name)) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT);
 		}
+		String tag = tag(draft.tag());
+		claim(project, null, tag);
 		AgentEntity agent = new AgentEntity(project, name, body(draft.body()));
 		agent.replaceSkills(skills(draft.skills()));
+		agent.retag(tag);
 		return view(agents.save(agent));
 	}
 
@@ -48,9 +51,12 @@ public class AgentService {
 		if (!agent.getName().equals(name) && agents.existsByProject_IdAndName(project.getId(), name)) {
 			throw new ResponseStatusException(HttpStatus.CONFLICT);
 		}
+		String tag = tag(draft == null ? null : draft.tag());
+		claim(project, agent.getId(), tag);
 		agent.rename(name);
 		agent.rewrite(body(draft == null ? null : draft.body()));
 		agent.replaceSkills(skills(draft == null ? null : draft.skills()));
+		agent.retag(tag);
 		return view(agent);
 	}
 
@@ -63,7 +69,7 @@ public class AgentService {
 
 	private static AgentView view(AgentEntity agent) {
 		List<String> skills = agent.getSkills().stream().map(AgentSkillEntity::getSkillPath).toList();
-		return new AgentView(agent.getId(), agent.getName(), agent.getBody(), skills);
+		return new AgentView(agent.getId(), agent.getName(), agent.getBody(), skills, agent.getTag());
 	}
 
 	private static String name(String raw) {
@@ -108,10 +114,31 @@ public class AgentService {
 		return List.copyOf(paths);
 	}
 
-	public record AgentView(long id, String name, String body, List<String> skills) {
+	private void claim(ProjectEntity project, Long agentId, String tag) {
+		if (tag == null) {
+			return;
+		}
+		boolean taken = agentId == null
+				? agents.existsByProject_IdAndTag(project.getId(), tag)
+				: agents.existsByProject_IdAndTagAndIdNot(project.getId(), tag, agentId);
+		if (taken) {
+			throw new ResponseStatusException(HttpStatus.CONFLICT, tag + " 在这个项目里只能有一个。");
+		}
 	}
 
-	public record AgentDraft(String name, String body, List<String> skills) {
+	private static String tag(String raw) {
+		try {
+			return AgentTag.normalize(raw);
+		}
+		catch (IllegalArgumentException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
+		}
+	}
+
+	public record AgentView(long id, String name, String body, List<String> skills, String tag) {
+	}
+
+	public record AgentDraft(String name, String body, List<String> skills, String tag) {
 	}
 
 }

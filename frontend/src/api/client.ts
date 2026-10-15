@@ -178,12 +178,14 @@ export interface AgentRecord {
   name: string
   body: string
   skills: string[]
+  tag: string | null
 }
 
 export interface AgentDraft {
   name: string
   body: string
   skills: string[]
+  tag: string | null
 }
 
 export function fetchAgents(): Promise<AgentRecord[]> {
@@ -199,6 +201,153 @@ export interface WorkerRecord {
 
 export function fetchWorkers(): Promise<WorkerRecord[]> {
   return getJson<WorkerRecord[]>('/api/workers')
+}
+
+export interface AgentSession {
+  assigned: boolean
+  alive: boolean
+  workerId: string
+  workerName: string
+  message: string
+  phase: string
+  text: string
+  failure: string
+}
+
+export function fetchAgentSession(number: string): Promise<AgentSession> {
+  return getJson<AgentSession>(`/api/issues/${encodeURIComponent(number)}/agent-session`)
+}
+
+export interface IssueAgent {
+  agentId: number
+  name: string
+  tag: string
+  assigned: boolean
+  alive: boolean
+  workerId: string
+  workerName: string
+}
+
+export function fetchIssueAgents(number: string): Promise<IssueAgent[]> {
+  return getJson<IssueAgent[]>(`/api/issues/${encodeURIComponent(number)}/agent-sessions`)
+}
+
+export async function createIssueAgentSession(number: string, agentId: number): Promise<IssueAgent> {
+  const response = await fetch(`/api/issues/${encodeURIComponent(number)}/agents/${agentId}/session`, { method: 'POST' })
+  if (!response.ok) {
+    throw new Error(await failureDetail(response, '创建 Agent 会话失败。'))
+  }
+  return response.json() as Promise<IssueAgent>
+}
+
+export async function createAgentSession(number: string): Promise<AgentSession> {
+  const response = await fetch(`/api/issues/${encodeURIComponent(number)}/agent-session`, { method: 'POST' })
+  if (!response.ok) {
+    throw new Error(await failureDetail(response, '创建 Agent 会话失败。'))
+  }
+  return response.json() as Promise<AgentSession>
+}
+
+export interface ConversationItem {
+  seq: number
+  role: 'user' | 'assistant'
+  status: 'done' | 'running' | 'failed'
+  createdAt: number
+  preview: string
+}
+
+export interface ConversationPart {
+  kind: 'text' | 'thinking' | 'tool' | 'file'
+  text?: string
+  id?: string
+  name?: string
+  arguments?: string
+  observation?: string
+  status?: string
+  path?: string
+}
+
+export interface ConversationMessage {
+  seq: number
+  role: 'user' | 'assistant'
+  status: 'done' | 'running' | 'failed'
+  createdAt: number
+  parts: ConversationPart[]
+}
+
+export interface ConversationPage {
+  messages: ConversationItem[]
+  hasMore: boolean
+}
+
+export interface ConversationFile {
+  path: string
+  name: string
+  text: string
+  binary: boolean
+}
+
+export function fetchConversations(number: string, before?: number): Promise<ConversationPage> {
+  return fetchAgentConversations(number, 0, before)
+}
+
+export function fetchAgentConversations(number: string, agentId: number, before?: number): Promise<ConversationPage> {
+  const query = before == null ? '' : `?before=${encodeURIComponent(String(before))}`
+  const path = agentId > 0 ? `/api/issues/${encodeURIComponent(number)}/agents/${agentId}/conversations` : `/api/issues/${encodeURIComponent(number)}/conversations`
+  return getJson<ConversationPage>(`${path}${query}`)
+}
+
+export function fetchConversation(number: string, seq: number): Promise<ConversationMessage> {
+  return fetchAgentConversation(number, 0, seq)
+}
+
+export function fetchAgentConversation(number: string, agentId: number, seq: number): Promise<ConversationMessage> {
+  const path = agentId > 0
+    ? `/api/issues/${encodeURIComponent(number)}/agents/${agentId}/conversations/${seq}`
+    : `/api/issues/${encodeURIComponent(number)}/conversations/${seq}`
+  return getJson<ConversationMessage>(path)
+}
+
+export async function sendConversation(number: string, text: string, files: string[] = []): Promise<{
+  user: ConversationMessage
+  assistant: ConversationMessage
+}> {
+  return sendAgentConversation(number, 0, text, files)
+}
+
+export async function sendAgentConversation(number: string, agentId: number, text: string, files: string[] = []): Promise<{
+  user: ConversationMessage
+  assistant: ConversationMessage
+}> {
+  const path = agentId > 0
+    ? `/api/issues/${encodeURIComponent(number)}/agents/${agentId}/messages`
+    : `/api/issues/${encodeURIComponent(number)}/messages`
+  const response = await fetch(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, files }),
+  })
+  if (!response.ok) {
+    throw new Error(await failureDetail(response, '消息没有送出去。'))
+  }
+  return response.json()
+}
+
+export async function fetchConversationFile(number: string, path: string, agentId = 0): Promise<ConversationFile> {
+  const base = agentId > 0
+    ? `/api/issues/${encodeURIComponent(number)}/agents/${agentId}/files`
+    : `/api/issues/${encodeURIComponent(number)}/files`
+  const response = await fetch(`${base}?path=${encodeURIComponent(path)}`)
+  if (!response.ok) {
+    throw new Error(await failureDetail(response, '附件没有打开。'))
+  }
+  return response.json() as Promise<ConversationFile>
+}
+
+async function failureDetail(response: Response, fallback: string): Promise<string> {
+  const body = await response.json().catch(() => null)
+  const detail = body && typeof body.detail === 'string' ? body.detail : ''
+  return detail || fallback
 }
 
 export async function createAgent(draft: AgentDraft): Promise<AgentRecord> {
@@ -233,10 +382,12 @@ async function writeAgent(path: string, method: string, draft: AgentDraft): Prom
     throw error
   }
   if (response.status === 409) {
-    throw new Error('已经有同名 agent。')
+    const body = await response.json().catch(() => null)
+    const message = body && typeof body.message === 'string' ? body.message : ''
+    throw new Error(message || '已经有同名 agent。')
   }
   if (response.status === 400) {
-    throw new Error('名称或 skill 引用没有通过。')
+    throw new Error('名称、角色或 skill 引用没有通过。')
   }
   if (!response.ok) {
     throw new Error(`${path} returned ${response.status}`)

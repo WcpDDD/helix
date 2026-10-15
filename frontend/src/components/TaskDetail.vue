@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { fetchIssueBody, fetchIssueNotes, type IssueNote } from '@/api/client'
+import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote } from '@/api/client'
 import TaskNext from '@/components/TaskNext.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
 import { renderMarkdown } from '@/markdown'
@@ -22,7 +22,29 @@ const emit = defineEmits<{
   close: []
 }>()
 
+type ShownMessage = ConversationMessage & { agentId: number; agentName: string }
+
 const pane = ref<'issue' | 'agent'>('issue')
+const seats = ref<IssueAgent[]>([])
+const focusAgent = ref<'group' | number>('group')
+const sessionState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const creating = ref(false)
+const createError = ref('')
+const messages = ref<ShownMessage[]>([])
+const hasMore = ref(false)
+const loadingOlder = ref(false)
+const threadState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const draft = ref('')
+const sending = ref(false)
+const sendError = ref('')
+const threadEl = ref<HTMLElement | null>(null)
+const fileView = ref<{ name: string; path: string; text: string; binary: boolean } | null>(null)
+const fileError = ref('')
+let sessionRequest = 0
+let threadRequest = 0
+const streams = new Map<string, EventSource>()
+const currentSeat = computed(() => seats.value.find((seat) => seat.agentId === focusAgent.value) ?? null)
+let stickToBottom = true
 const bodyEl = ref<HTMLElement | null>(null)
 const selectedId = ref(defaultIssueId(props.task))
 const selectedEdgeId = ref('')
@@ -75,6 +97,74 @@ const mainIssue = computed((): TaskIssue => ({
 const issueView = computed((): TaskIssue => {
   return graphIssues.value.find((item) => item.id === selectedId.value) ?? mainIssue.value
 })
+
+watch(
+  [pane, () => issueView.value.id],
+  ([nextPane, number]) => {
+    if (nextPane !== 'agent') {
+      closeStream()
+      return
+    }
+    void loadRoster(number)
+  },
+)
+
+async function loadRoster(number: string) {
+  const request = ++sessionRequest
+  sessionState.value = 'loading'
+  createError.value = ''
+  focusAgent.value = 'group'
+  try {
+    const next = await fetchIssueAgents(number)
+    if (request !== sessionRequest) return
+    seats.value = next
+    sessionState.value = 'ready'
+    void loadView(number)
+  } catch {
+    if (request !== sessionRequest) return
+    seats.value = []
+    sessionState.value = 'error'
+  }
+}
+
+function selectAgent(id: 'group' | number) {
+  if (focusAgent.value === id) return
+  focusAgent.value = id
+  void loadView(issueView.value.id)
+}
+
+async function loadView(number: string) {
+  if (focusAgent.value === 'group') {
+    await loadGroup(number)
+    return
+  }
+  const seat = currentSeat.value
+  if (!seat?.assigned || !seat.alive) {
+    closeStream()
+    messages.value = []
+    threadState.value = 'ready'
+    return
+  }
+  await loadThread(number, seat.agentId, seat.name)
+}
+
+async function createSession() {
+  if (creating.value || focusAgent.value === 'group') return
+  const agentId = focusAgent.value
+  const number = issueView.value.id
+  creating.value = true
+  createError.value = ''
+  try {
+    const next = await createIssueAgentSession(number, agentId)
+    const index = seats.value.findIndex((seat) => seat.agentId === agentId)
+    if (index >= 0) seats.value[index] = next
+    if (next.assigned && next.alive) await loadThread(number, next.agentId, next.name)
+  } catch (error) {
+    createError.value = error instanceof Error && error.message ? error.message : '创建 Agent 会话失败。'
+  } finally {
+    creating.value = false
+  }
+}
 
 const selectedEdge = computed(() => graphEdges.value.find((edge) => edge.id === selectedEdgeId.value) ?? null)
 
@@ -179,11 +269,261 @@ function mrStateTone(state: string): string {
 }
 
 function onKeydown(event: KeyboardEvent) {
-  if (event.key === 'Escape') emit('close')
+  if (event.key !== 'Escape') return
+  if (fileView.value) {
+    fileView.value = null
+    return
+  }
+  emit('close')
+}
+
+const replying = computed(() =>
+  focusAgent.value !== 'group' &&
+  messages.value.some((message) => message.agentId === focusAgent.value && message.role === 'assistant' && message.status === 'running'),
+)
+
+async function loadGroup(number: string) {
+  const request = ++threadRequest
+  closeStream()
+  threadState.value = 'loading'
+  sendError.value = ''
+  fileView.value = null
+  const seated = seats.value.filter((seat) => seat.assigned && seat.alive)
+  try {
+    const pages = await Promise.all(seated.map((seat) => readPage(number, seat, undefined)))
+    if (request !== threadRequest) return
+    messages.value = pages.flat().sort(byTime)
+    hasMore.value = false
+    threadState.value = 'ready'
+    stickToBottom = true
+    await nextTick()
+    scrollThreadToEnd()
+    for (const message of messages.value) {
+      if (message.role === 'assistant' && message.status === 'running') watchStream(number, message.agentId, message.seq)
+    }
+  } catch {
+    if (request !== threadRequest) return
+    messages.value = []
+    threadState.value = 'error'
+  }
+}
+
+async function loadThread(number: string, agentId: number, agentName: string) {
+  const request = ++threadRequest
+  closeStream()
+  threadState.value = 'loading'
+  sendError.value = ''
+  fileView.value = null
+  try {
+    const page = await fetchAgentConversations(number, agentId)
+    if (request !== threadRequest) return
+    const full = await Promise.all(page.messages.map((item) => stamp(number, agentId, agentName, item.seq)))
+    if (request !== threadRequest) return
+    messages.value = full
+    hasMore.value = page.hasMore
+    threadState.value = 'ready'
+    stickToBottom = true
+    await nextTick()
+    scrollThreadToEnd()
+    const last = full[full.length - 1]
+    if (last?.role === 'assistant' && last.status === 'running') watchStream(number, agentId, last.seq)
+  } catch {
+    if (request !== threadRequest) return
+    messages.value = []
+    threadState.value = 'error'
+  }
+}
+
+async function readPage(number: string, seat: IssueAgent, before?: number): Promise<ShownMessage[]> {
+  const page = await fetchAgentConversations(number, seat.agentId, before)
+  return Promise.all(page.messages.map((item) => stamp(number, seat.agentId, seat.name, item.seq)))
+}
+
+async function stamp(number: string, agentId: number, agentName: string, seq: number): Promise<ShownMessage> {
+  const message = await fetchAgentConversation(number, agentId, seq)
+  return { ...message, agentId, agentName }
+}
+
+function byTime(left: ShownMessage, right: ShownMessage): number {
+  return left.createdAt - right.createdAt || left.agentId - right.agentId || left.seq - right.seq
+}
+
+async function loadOlder() {
+  if (focusAgent.value === 'group') return
+  const el = threadEl.value
+  const oldest = messages.value[0]
+  const seat = currentSeat.value
+  if (!el || !oldest || !seat || !hasMore.value || loadingOlder.value) return
+  const number = issueView.value.id
+  const request = threadRequest
+  loadingOlder.value = true
+  const beforeHeight = el.scrollHeight
+  try {
+    const page = await fetchAgentConversations(number, seat.agentId, oldest.seq)
+    if (request !== threadRequest) return
+    const full = await Promise.all(page.messages.map((item) => stamp(number, seat.agentId, seat.name, item.seq)))
+    if (request !== threadRequest) return
+    messages.value = [...full, ...messages.value]
+    hasMore.value = page.hasMore
+    await nextTick()
+    el.scrollTop = el.scrollHeight - beforeHeight
+  } catch {
+    sendError.value = '更早的消息没有读到。'
+  } finally {
+    loadingOlder.value = false
+  }
+}
+
+function onThreadScroll() {
+  const el = threadEl.value
+  if (!el) return
+  stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+  if (el.scrollTop < 24) void loadOlder()
+}
+
+async function send() {
+  const text = draft.value.trim()
+  const seat = currentSeat.value
+  if (!text || sending.value || replying.value || !seat) return
+  const number = issueView.value.id
+  sending.value = true
+  sendError.value = ''
+  try {
+    const sent = await sendAgentConversation(number, seat.agentId, text)
+    draft.value = ''
+    const user = { ...sent.user, agentId: seat.agentId, agentName: seat.name }
+    const assistant = { ...sent.assistant, agentId: seat.agentId, agentName: seat.name }
+    messages.value = messages.value.filter((message) => message.agentId !== seat.agentId || (message.seq !== user.seq && message.seq !== assistant.seq))
+    messages.value.push(user, assistant)
+    stickToBottom = true
+    await nextTick()
+    scrollThreadToEnd()
+    if (assistant.status === 'running') watchStream(number, seat.agentId, assistant.seq)
+  } catch (error) {
+    sendError.value = error instanceof Error && error.message ? error.message : '消息没有送出去。'
+  } finally {
+    sending.value = false
+  }
+}
+
+let draftComposing = false
+
+function onDraftCompositionStart() {
+  draftComposing = true
+}
+
+function onDraftCompositionEnd() {
+  window.setTimeout(() => {
+    draftComposing = false
+  }, 0)
+}
+
+function onDraftKeydown(event: KeyboardEvent) {
+  if (event.key !== 'Enter' || event.shiftKey) return
+  if (event.isComposing || event.keyCode === 229 || draftComposing) return
+  event.preventDefault()
+  void send()
+}
+
+function watchStream(number: string, agentId: number, seq: number) {
+  const key = `${agentId}:${seq}`
+  streams.get(key)?.close()
+  const source = new EventSource(`/api/issues/${encodeURIComponent(number)}/agents/${agentId}/conversations/${seq}/stream`)
+  streams.set(key, source)
+  const current = () => {
+    const index = messages.value.findIndex((message) => message.agentId === agentId && message.seq === seq)
+    const message = index < 0 ? undefined : messages.value[index]
+    return { index, message }
+  }
+  const put = (index: number, message: ShownMessage) => {
+    messages.value[index] = message
+    if (stickToBottom) void nextTick(scrollThreadToEnd)
+  }
+  const apply = (kind: string) => (event: MessageEvent) => {
+    const data = JSON.parse(event.data) as ConversationMessage & ConversationPart & { status?: ConversationMessage['status'] }
+    const { index, message } = current()
+    if (index < 0 || !message) return
+    if (kind === 'snapshot') {
+      put(index, { ...(data as ConversationMessage), agentId, agentName: message.agentName })
+      return
+    }
+    if (kind === 'done') {
+      put(index, { ...message, status: data.status === 'failed' ? 'failed' : 'done' })
+      source.close()
+      if (streams.get(key) === source) streams.delete(key)
+      return
+    }
+    const parts = message.parts.slice()
+    if (kind === 'text' || kind === 'thinking') {
+      const last = parts[parts.length - 1]
+      if (last && last.kind === kind) parts[parts.length - 1] = { ...last, text: `${last.text || ''}${data.text || ''}` }
+      else parts.push({ kind, text: data.text || '' })
+    } else if (kind === 'tool') {
+      const found = parts.findIndex((part) => part.kind === 'tool' && part.id === data.id)
+      if (found >= 0) parts[found] = { ...data, kind: 'tool' }
+      else parts.push({ ...data, kind: 'tool' })
+    } else if (kind === 'file') {
+      if (!parts.some((part) => part.kind === 'file' && part.path === data.path)) {
+        parts.push({ kind: 'file', name: data.name, path: data.path })
+      }
+    }
+    put(index, { ...message, parts })
+  }
+  source.addEventListener('snapshot', apply('snapshot'))
+  source.addEventListener('text', apply('text'))
+  source.addEventListener('thinking', apply('thinking'))
+  source.addEventListener('tool', apply('tool'))
+  source.addEventListener('file', apply('file'))
+  source.addEventListener('done', apply('done'))
+  source.onerror = () => {
+    const { message } = current()
+    if (!message || message.status !== 'running') {
+      source.close()
+      if (streams.get(key) === source) streams.delete(key)
+      return
+    }
+    void fetchAgentConversation(number, agentId, seq).then((fresh) => {
+      if (streams.get(key) !== source) return
+      const { index, message } = current()
+      if (index >= 0 && message) messages.value[index] = { ...fresh, agentId, agentName: message.agentName }
+      if (fresh.status !== 'running') {
+        source.close()
+        if (streams.get(key) === source) streams.delete(key)
+      }
+    }).catch(() => {})
+  }
+}
+
+function closeStream() {
+  for (const source of streams.values()) source.close()
+  streams.clear()
+}
+
+function scrollThreadToEnd() {
+  const el = threadEl.value
+  if (!el) return
+  el.scrollTop = el.scrollHeight
+}
+
+async function openAttachment(path: string | undefined, agentId: number) {
+  if (!path) return
+  const number = issueView.value.id
+  fileError.value = ''
+  fileView.value = { name: path.split('/').pop() || path, path, text: '', binary: false }
+  try {
+    const file = await fetchConversationFile(number, path, agentId)
+    if (fileView.value?.path !== path) return
+    fileView.value = file
+  } catch (error) {
+    fileError.value = error instanceof Error && error.message ? error.message : '附件没有打开。'
+  }
 }
 
 onMounted(() => window.addEventListener('keydown', onKeydown))
-onUnmounted(() => window.removeEventListener('keydown', onKeydown))
+onUnmounted(() => {
+  closeStream()
+  window.removeEventListener('keydown', onKeydown)
+})
 </script>
 
 <template>
@@ -388,9 +728,104 @@ onUnmounted(() => window.removeEventListener('keydown', onKeydown))
       </template>
     </div>
 
-    <div v-else ref="bodyEl" class="detail-body">
-      <p class="run-line">#{{ issueView.id }} {{ issueView.title }}</p>
-      <p class="empty">运行记录下一阶段再落表。</p>
+    <div v-else class="session-pane">
+      <p v-if="sessionState === 'loading'" class="empty">正在读取会话。</p>
+      <p v-else-if="sessionState === 'error'" class="empty">会话没有读到。</p>
+      <template v-else>
+      <nav class="agent-switch" aria-label="Agent">
+        <button type="button" :class="{ on: focusAgent === 'group' }" @click="selectAgent('group')">群聊</button>
+        <button
+          v-for="seat in seats"
+          :key="seat.agentId"
+          type="button"
+          :class="{ on: focusAgent === seat.agentId }"
+          @click="selectAgent(seat.agentId)"
+        >
+          <span>{{ seat.name }}</span>
+          <em v-if="seat.tag">{{ seat.tag }}</em>
+        </button>
+      </nav>
+      <p v-if="seats.length === 0" class="empty">这个项目还没有 Agent。</p>
+      <div v-else-if="focusAgent !== 'group' && !currentSeat?.assigned" class="session-mask">
+        <p>{{ currentSeat?.name }} 还没有自己的会话。</p>
+        <p v-if="createError" class="create-error">{{ createError }}</p>
+        <button type="button" :disabled="creating" @click="createSession">
+          {{ creating ? '正在创建' : '创建会话' }}
+        </button>
+      </div>
+      <div v-else-if="focusAgent !== 'group' && currentSeat && !currentSeat.alive" class="session-alert">
+        <div class="session-copy">
+          <p>绑定的 Worker 不存活，会话已中断。</p>
+          <p class="hint">请联系管理员处理。</p>
+        </div>
+      </div>
+      <div v-else class="session-live">
+        <p v-if="threadState === 'loading'" class="empty">正在读取对话。</p>
+        <p v-else-if="threadState === 'error'" class="empty">对话没有读到。</p>
+        <ol v-else ref="threadEl" class="thread" @scroll="onThreadScroll">
+          <li v-if="hasMore" class="older">
+            <button type="button" class="fold" :disabled="loadingOlder" @click="loadOlder">
+              {{ loadingOlder ? '正在读取更早的消息' : '更早的消息' }}
+            </button>
+          </li>
+          <li v-for="message in messages" :key="`${message.agentId}-${message.seq}`" :class="message.role">
+            <div class="bubble">
+              <p v-if="focusAgent === 'group'" class="speaker">
+                {{ message.role === 'user' ? `你 → ${message.agentName}` : message.agentName }}
+              </p>
+              <template v-for="(part, index) in message.parts" :key="`${message.seq}-${index}`">
+                <details v-if="part.kind === 'thinking'" class="thinking" :open="message.status === 'running'">
+                  <summary>思考</summary>
+                  <p>{{ part.text }}</p>
+                </details>
+                <div v-else-if="part.kind === 'tool'" class="tool">
+                  <div class="tool-name">
+                    <span>{{ part.name || '工具' }}</span>
+                    <em>{{ part.status === 'done' ? '完成' : '进行中' }}</em>
+                  </div>
+                  <pre v-if="part.arguments">{{ part.arguments }}</pre>
+                  <pre v-if="part.observation">{{ part.observation }}</pre>
+                </div>
+                <button v-else-if="part.kind === 'file'" type="button" class="file-ref" @click="openAttachment(part.path, message.agentId)">
+                  {{ part.name || part.path }}
+                </button>
+                <div v-else-if="part.text" class="issue-body" v-html="renderMarkdown(part.text)" />
+              </template>
+              <p v-if="message.role === 'assistant' && message.status === 'running'" class="hint">正在回复</p>
+              <p v-else-if="message.status === 'failed'" class="create-error">这轮没有完成。</p>
+            </div>
+          </li>
+          <li v-if="messages.length === 0" class="thread-empty">
+            <p class="empty">还没有消息。</p>
+          </li>
+        </ol>
+        <p v-if="focusAgent === 'group'" class="group-note">选择一个 Agent 再发送。群聊按时间把各自的会话铺在一起。</p>
+        <form v-else class="reply" @submit.prevent="send">
+          <textarea
+            v-model="draft"
+            rows="3"
+            placeholder="发给这个 Agent"
+            :disabled="sending || replying"
+            @compositionstart="onDraftCompositionStart"
+            @compositionend="onDraftCompositionEnd"
+            @keydown="onDraftKeydown"
+          />
+          <p v-if="sendError" class="create-error">{{ sendError }}</p>
+          <button type="submit" :disabled="sending || replying || !draft.trim()">
+            {{ sending ? '正在发送' : '发送' }}
+          </button>
+        </form>
+        <section v-if="fileView" class="file-view" role="dialog" aria-label="附件">
+          <header>
+            <strong>{{ fileView.name }}</strong>
+            <button type="button" @click="fileView = null">关闭</button>
+          </header>
+          <p v-if="fileError" class="create-error">{{ fileError }}</p>
+          <p v-else-if="fileView.binary" class="empty">这个附件不能按文本打开。</p>
+          <pre v-else>{{ fileView.text }}</pre>
+        </section>
+      </div>
+      </template>
     </div>
   </section>
 </template>
@@ -921,6 +1356,266 @@ h3 {
   font-size: 13px;
 }
 
+.agent-switch {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0 0 16px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.agent-switch::-webkit-scrollbar {
+  display: none;
+}
+
+.agent-switch button {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.agent-switch button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.agent-switch em {
+  color: var(--muted);
+  font-style: normal;
+  font-size: 12px;
+}
+
+.agent-switch button.on em {
+  color: var(--accent);
+}
+
+.speaker,
+.group-note {
+  margin: 0 0 6px;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.group-note {
+  margin: 0 0 16px;
+}
+
+.session-pane > .empty {
+  margin: 0;
+  padding: 4px 0 0;
+}
+
+.thread-empty {
+  display: block;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.session-pane {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding: 16px 22px 0;
+}
+
+.session-mask,
+.session-alert {
+  display: grid;
+  flex: 1;
+  place-items: center;
+  align-content: center;
+  gap: 16px;
+  padding: 32px 0;
+  text-align: center;
+}
+
+.session-mask {
+  background: color-mix(in srgb, var(--surface) 88%, #1a1f1c);
+}
+
+.session-copy {
+  display: grid;
+  gap: 6px;
+  justify-items: center;
+}
+
+.session-mask > p,
+.session-copy p,
+.create-error {
+  margin: 0;
+  max-width: 28em;
+  line-height: 1.5;
+}
+
+.session-alert .session-copy > p:first-child {
+  color: var(--danger, #9a3412);
+  font-weight: 650;
+}
+
+.hint {
+  color: var(--muted);
+}
+
+.create-error {
+  color: var(--danger, #9a3412);
+  font-weight: 650;
+}
+
+.session-mask button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.session-mask button {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 16px;
+  background: var(--accent);
+  color: white;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.session-live {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.session-live > .thread {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  align-content: start;
+  padding: 0 0 12px;
+}
+
+.thread li.user {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.older {
+  display: flex;
+  justify-content: center;
+}
+
+.thinking,
+.tool {
+  margin-top: 8px;
+  min-width: 0;
+}
+
+.thinking summary,
+.tool-name {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.tool-name {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  cursor: default;
+}
+
+.tool-name em {
+  font-style: normal;
+  font-weight: 500;
+}
+
+.thinking p,
+.tool pre {
+  max-height: 180px;
+  overflow: auto;
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.file-ref {
+  display: inline-flex;
+  margin-top: 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: white;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.file-view {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface);
+}
+
+.file-view header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--line);
+}
+
+.file-view header button,
+.file-view header strong {
+  font: inherit;
+}
+
+.file-view header button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.file-view pre {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  margin: 0;
+  padding: 16px 22px 28px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+}
+
+.file-view .create-error,
+.file-view .empty {
+  padding: 16px 22px;
+}
+
 .run-line {
   margin: 0 0 14px;
   font-size: 13px;
@@ -932,6 +1627,7 @@ h3 {
 }
 
 .bubble {
+  width: fit-content;
   max-width: 86%;
   padding: 10px 12px;
   border-radius: 14px;
@@ -950,7 +1646,7 @@ h3 {
   display: grid;
   flex-shrink: 0;
   gap: 8px;
-  margin: 0;
+  margin: 0 -22px;
   padding: 12px 22px 16px;
   border-top: 1px solid var(--line);
 }

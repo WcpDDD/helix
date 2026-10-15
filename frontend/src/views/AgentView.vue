@@ -10,6 +10,7 @@ import {
   type SkillEntry,
 } from '@/api/client'
 import { renderMarkdown } from '@/markdown'
+import { agentTagGroups } from '@/data/agentTags'
 import { useProjectStore } from '@/stores/projects'
 
 const projects = useProjectStore()
@@ -19,6 +20,7 @@ const selectedId = ref<number | 'new' | null>(null)
 const name = ref('')
 const body = ref('')
 const skills = ref<string[]>([])
+const tag = ref<string | null>(null)
 const phase = ref<'loading' | 'ready' | 'error'>('loading')
 const notice = ref('')
 const saving = ref(false)
@@ -81,12 +83,25 @@ function select(id: number | 'new') {
     name.value = ''
     body.value = ''
     skills.value = []
+    tag.value = null
     return
   }
   const agent = agents.value.find((item) => item.id === id)
   name.value = agent?.name ?? ''
   body.value = agent?.body ?? ''
   skills.value = [...(agent?.skills ?? [])]
+  tag.value = agent?.tag ?? null
+}
+
+function tagHolder(role: string): string | null {
+  const owner = agents.value.find((agent) => agent.tag === role && agent.id !== selectedId.value)
+  return owner?.name ?? null
+}
+
+function chooseTag(next: string) {
+  if (tagHolder(next)) return
+  tag.value = tag.value === next ? null : next
+  saved.value = false
 }
 
 function addSkill(path: string) {
@@ -114,7 +129,7 @@ async function save() {
   saving.value = true
   saveError.value = ''
   saved.value = false
-  const draft = { name: name.value.trim(), body: body.value, skills: skills.value }
+  const draft = { name: name.value.trim(), body: body.value, skills: skills.value, tag: tag.value }
   try {
     const savedAgent = selectedId.value === 'new' ? await createAgent(draft) : await updateAgent(selectedId.value, draft)
     agents.value = [...agents.value.filter((item) => item.id !== savedAgent.id), savedAgent].sort((a, b) =>
@@ -157,7 +172,7 @@ async function remove() {
   <main class="agent-page">
     <header class="head">
       <h1>Agent</h1>
-      <p>每个 agent 有一份 agent.md，并引用指定的 skill。</p>
+      <p>每个 agent 有一份 agent.md，并标出它承担的角色。</p>
     </header>
 
     <p v-if="phase === 'loading'" class="note">正在读取 agent。</p>
@@ -173,7 +188,8 @@ async function remove() {
           :title="agent.name"
           @click="select(agent.id)"
         >
-          {{ agent.name }}
+          <span class="agent-name">{{ agent.name }}</span>
+          <span v-if="agent.tag" class="agent-tags">{{ agent.tag }}</span>
         </button>
       </nav>
 
@@ -182,6 +198,26 @@ async function remove() {
           名称
           <input v-model="name" type="text" autocomplete="off" placeholder="给这个 agent 起个名字" @input="saved = false" />
         </label>
+        <div class="tags">
+          <span>角色</span>
+          <div v-for="group in agentTagGroups" :key="group.id" class="tag-group" role="group" :aria-label="group.label">
+            <span class="tag-layer">{{ group.label }}</span>
+            <div class="tag-choices">
+              <button
+                v-for="item in group.tags"
+                :key="item.id"
+                type="button"
+                :class="{ on: tag === item.id }"
+                :aria-pressed="tag === item.id"
+                :disabled="tag !== item.id && tagHolder(item.id) != null"
+                :title="tagHolder(item.id) ? `${item.id} 已经是 ${tagHolder(item.id)}` : item.hint"
+                @click="chooseTag(item.id)"
+              >
+                {{ item.id }}
+              </button>
+            </div>
+          </div>
+        </div>
         <div ref="pickerEl" class="refs">
           <div class="refs-head">
             <span>引用的 skill</span>
@@ -294,7 +330,12 @@ async function remove() {
 }
 
 .agent-list button {
+  display: flex;
   flex: none;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
   height: 36px;
   padding: 0 12px;
   overflow: hidden;
@@ -302,8 +343,31 @@ async function remove() {
   font-size: 14px;
   line-height: 36px;
   text-align: left;
+}
+
+.agent-name,
+.agent-tags {
+  min-width: 0;
+  overflow: hidden;
   white-space: nowrap;
   text-overflow: ellipsis;
+}
+
+.agent-name {
+  flex: 1;
+}
+
+.agent-tags {
+  flex: none;
+}
+
+.agent-tags {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.agent-list button.on .agent-tags {
+  color: var(--accent);
 }
 
 .agent-list button.on,
@@ -353,6 +417,55 @@ input {
   height: 40px;
   padding: 0 12px;
   font-size: 15px;
+}
+
+.tags {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.tag-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.tag-layer {
+  font-size: 12px;
+}
+
+.tag-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tag-choices button {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.tag-choices button.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.tag-choices button:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .refs {

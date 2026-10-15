@@ -1,9 +1,12 @@
 package dev.helix.worker;
 
+import java.net.URI;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Optional;
 
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -24,14 +27,36 @@ public class WorkerRegistry {
 	}
 
 	@Transactional
-	public WorkerView heartbeat(String id, String name) {
+	public WorkerView heartbeat(String id, String name, String address) {
 		String workerId = required(id, "worker id 不能空。");
 		String workerName = required(name, "worker 名字不能空。");
 		WorkerEntity worker = workers.findById(workerId).orElseGet(() -> new WorkerEntity(workerId, workerName, Instant.now()));
 		worker.rename(workerName);
 		worker.touch(Instant.now());
+		String endpoint = address(address);
+		if (endpoint != null) {
+			worker.locate(endpoint);
+		}
 		workers.save(worker);
 		return view(worker);
+	}
+
+	@Transactional(readOnly = true)
+	public Optional<CallableWorker> lightest(Map<String, Long> bindings) {
+		Map<String, Long> load = bindings == null ? Map.of() : bindings;
+		return workers.findAll().stream()
+				.filter(this::alive)
+				.flatMap(worker -> callable(worker).stream())
+				.min(Comparator.comparingLong((CallableWorker worker) -> load.getOrDefault(worker.id(), 0L))
+						.thenComparing(CallableWorker::id));
+	}
+
+	@Transactional(readOnly = true)
+	public Optional<CallableWorker> live(String workerId) {
+		if (workerId == null || workerId.isBlank()) {
+			return Optional.empty();
+		}
+		return workers.findById(workerId).filter(this::alive).flatMap(WorkerRegistry::callable);
 	}
 
 	@Transactional(readOnly = true)
@@ -63,6 +88,45 @@ public class WorkerRegistry {
 		return new WorkerView(worker.getId(), worker.getName(), alive(worker), worker.getLastHeartbeat());
 	}
 
+	private static Optional<CallableWorker> callable(WorkerEntity worker) {
+		String address = worker.getAddress();
+		if (address == null || address.isBlank()) {
+			return Optional.empty();
+		}
+		try {
+			URI uri = URI.create(address);
+			if (uri.getHost() == null) {
+				return Optional.empty();
+			}
+			return Optional.of(new CallableWorker(worker.getId(), worker.getName(), uri));
+		}
+		catch (IllegalArgumentException exception) {
+			return Optional.empty();
+		}
+	}
+
+	private static String address(String value) {
+		if (value == null || value.isBlank()) {
+			return null;
+		}
+		String text = value.strip();
+		while (text.endsWith("/")) {
+			text = text.substring(0, text.length() - 1);
+		}
+		URI uri;
+		try {
+			uri = URI.create(text);
+		}
+		catch (IllegalArgumentException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "worker 地址不对。");
+		}
+		String scheme = uri.getScheme();
+		if (uri.getHost() == null || (!"http".equals(scheme) && !"https".equals(scheme))) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "worker 地址不对。");
+		}
+		return text;
+	}
+
 	private static String required(String value, String message) {
 		if (value == null || value.isBlank()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, message);
@@ -71,6 +135,9 @@ public class WorkerRegistry {
 	}
 
 	public record WorkerView(String id, String name, boolean alive, Instant lastHeartbeat) {
+	}
+
+	public record CallableWorker(String id, String name, URI address) {
 	}
 
 }

@@ -19,7 +19,19 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5174,
     proxy: {
-      '/api': 'http://localhost:8080',
+      '/api': {
+        target: 'http://127.0.0.1:8080',
+        timeout: 0,
+        proxyTimeout: 0,
+        configure: (proxy) => {
+          proxy.on('proxyRes', (proxyRes) => {
+            const type = String(proxyRes.headers['content-type'] || '')
+            if (!type.includes('text/event-stream')) return
+            proxyRes.headers['cache-control'] = 'no-cache, no-transform'
+            proxyRes.headers['x-accel-buffering'] = 'no'
+          })
+        },
+      },
     },
   },
 })

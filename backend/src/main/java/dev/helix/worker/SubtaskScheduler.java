@@ -8,6 +8,7 @@ import dev.helix.board.AgentSkillEntity;
 import dev.helix.board.IssueEntity;
 import dev.helix.board.IssueRepository;
 
+import org.springframework.dao.DataAccessException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,6 +45,32 @@ public class SubtaskScheduler {
 		return routes.findById(issueId)
 				.map(route -> routeExisting(route))
 				.orElseGet(() -> dispatch(issue, agent, prompt));
+	}
+
+	@Transactional(readOnly = true)
+	public AgentSessionView session(long projectId, int number) {
+		IssueEntity issue;
+		try {
+			issue = issues.findInProject(projectId, number).orElse(null);
+		}
+		catch (DataAccessException exception) {
+			return AgentSessionView.none();
+		}
+		if (issue == null) {
+			return AgentSessionView.none();
+		}
+		SubtaskRouteEntity route = routes.findById(issue.getId()).orElse(null);
+		if (route == null) {
+			return AgentSessionView.none();
+		}
+		WorkerRegistry.WorkerView worker = registry.list().stream()
+				.filter(item -> item.id().equals(route.getWorkerId()))
+				.findFirst()
+				.orElse(null);
+		boolean alive = worker != null && worker.alive();
+		String name = worker == null ? "" : worker.name();
+		return new AgentSessionView(true, alive, route.getWorkerId(), name, route.getMessage(), route.getPhase(),
+				route.getResultText(), route.getFailure());
 	}
 
 	@Transactional(readOnly = true)
@@ -132,6 +159,14 @@ public class SubtaskScheduler {
 	public record Dispatch(long issueId, long agentId, String systemPrompt, String message) {
 		static Dispatch of(SubtaskRouteEntity route) {
 			return new Dispatch(route.getIssueId(), route.getAgentId(), route.getSystemPrompt(), route.getMessage());
+		}
+	}
+
+	public record AgentSessionView(boolean assigned, boolean alive, String workerId, String workerName, String message,
+			String phase, String text, String failure) {
+
+		static AgentSessionView none() {
+			return new AgentSessionView(false, false, "", "", "", "", "", "");
 		}
 	}
 

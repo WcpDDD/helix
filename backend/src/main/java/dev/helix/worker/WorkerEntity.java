@@ -20,6 +20,8 @@ public class WorkerEntity {
 	@Column(name = "last_heartbeat", nullable = false)
 	private Instant lastHeartbeat;
 
+	private String address;
+
 	protected WorkerEntity() {
 	}
 
@@ -47,6 +49,14 @@ public class WorkerEntity {
 
 	public void touch(Instant at) {
 		this.lastHeartbeat = at;
+	}
+
+	public String getAddress() {
+		return address;
+	}
+
+	public void locate(String address) {
+		this.address = address;
 	}
 
 }

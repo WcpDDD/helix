@@ -1,6 +1,7 @@
 package dev.helix.api;
 
 import java.util.List;
+import java.util.Map;
 
 import dev.helix.auth.AuthController;
 import dev.helix.auth.GitlabUser;
@@ -10,7 +11,9 @@ import dev.helix.board.AgentService.AgentView;
 import dev.helix.board.CurrentProject;
 
 import org.springframework.http.HttpStatus;
+import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -57,6 +60,15 @@ public class AgentController {
 	public void delete(@PathVariable long id, HttpSession session) {
 		requireUser(session);
 		agents.delete(currentProject.resolve(session), id);
+	}
+
+	@ExceptionHandler(ResponseStatusException.class)
+	ResponseEntity<Map<String, String>> failed(ResponseStatusException exception) {
+		String message = exception.getReason();
+		if (message == null || message.isBlank()) {
+			message = exception.getStatusCode().value() == HttpStatus.CONFLICT.value() ? "已经有同名 agent。" : "请求没有通过。";
+		}
+		return ResponseEntity.status(exception.getStatusCode()).body(Map.of("message", message));
 	}
 
 	private static GitlabUser requireUser(HttpSession session) {
