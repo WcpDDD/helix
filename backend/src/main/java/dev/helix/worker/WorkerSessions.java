@@ -144,20 +144,13 @@ public final class WorkerSessions {
 		}
 	}
 
-	static String task(int issueNumber) {
-		return """
-				分析这个代码仓库，并读取当前 GitLab issue #%d 的信息。
-				说明仓库里和这张 issue 相关的代码，以及 issue 的标题、描述和状态。
-				GitLab 的地址、项目和凭据在环境变量里，变量名以 GITLAB_ 开头。不要把凭据写进文件或回复。
-				""".formatted(issueNumber);
-	}
-
 	public record Result(int status, String body) {
 	}
 
 	@FunctionalInterface
 	public interface SessionStarter {
-		void start(String threadId, String message, Path workspace, Map<String, String> gitlabEnv, RunSink sink);
+		void start(String threadId, String message, Path workspace, Map<String, String> gitlabEnv, RunSink sink,
+				AgentProfile profile);
 	}
 
 	private static String detail(String message) {

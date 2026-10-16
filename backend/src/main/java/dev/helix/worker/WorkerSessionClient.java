@@ -21,15 +21,11 @@ public class WorkerSessionClient {
 		this.http = RestClient.builder().requestFactory(factory).build();
 	}
 
-	public void create(URI address, int issueNumber) {
-		create(address, issueNumber, 0);
-	}
-
-	public void create(URI address, int issueNumber, long agentId) {
+	public void create(URI address, String body) {
 		http.post()
 				.uri(endpoint(address))
 				.contentType(MediaType.APPLICATION_JSON)
-				.body("{\"issueNumber\":" + issueNumber + ",\"agentId\":" + agentId + "}")
+				.body(body == null || body.isBlank() ? "{}" : body)
 				.retrieve()
 				.toBodilessEntity();
 	}

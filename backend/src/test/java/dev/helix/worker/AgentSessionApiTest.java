@@ -4,11 +4,14 @@ import java.io.IOException;
 import java.net.InetSocketAddress;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import com.sun.net.httpserver.HttpServer;
 
+import dev.helix.board.AgentEntity;
+import dev.helix.board.AgentRepository;
 import dev.helix.board.IssueRepository;
 import dev.helix.board.ProjectRepository;
 
@@ -49,14 +52,18 @@ class AgentSessionApiTest {
 	@Autowired
 	private AgentSessionRepository sessions;
 
+	@Autowired
+	private AgentRepository agents;
+
 	@AfterEach
 	void cleanup() {
 		issues.findByGitIssueNumber(22).ifPresent(issue -> routes.deleteById(issue.getId()));
 		workers.deleteById("worker-session");
 		sessions.findAll().stream()
 				.filter(item -> item.getIssueNumber() == 880010 || item.getIssueNumber() == 880011
-						|| item.getIssueNumber() == 880012)
+						|| item.getIssueNumber() == 880012 || item.getIssueNumber() == 880030)
 				.forEach(sessions::delete);
+		agents.findAll().stream().filter(agent -> "guide-proposal".equals(agent.getName())).forEach(agents::delete);
 		workers.deleteById("worker-idle");
 		workers.deleteById("worker-busy");
 		workers.deleteById("worker-fail");
@@ -147,6 +154,81 @@ class AgentSessionApiTest {
 					.andExpect(jsonPath("$.detail").value("创建 Agent 会话失败。"));
 			mockMvc.perform(get("/api/issues/880012/agent-session"))
 					.andExpect(jsonPath("$.assigned").value(false));
+		}
+		finally {
+			server.stop(0);
+		}
+	}
+
+	@Test
+	void workerDispatchesATaskAndReadsTheConversationCatalog() throws Exception {
+		retireWorkers();
+		AtomicInteger hits = new AtomicInteger();
+		AtomicReference<String> seen = new AtomicReference<>();
+		HttpServer server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+		server.createContext("/", exchange -> {
+			hits.incrementAndGet();
+			String path = exchange.getRequestURI().getPath();
+			String query = exchange.getRequestURI().getRawQuery();
+			String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
+			seen.set(exchange.getRequestMethod() + " " + path + (query == null ? "" : "?" + query) + "\n" + request);
+			boolean full = path.matches(".*/conversations/\\d+");
+			byte[] payload = "POST".equals(exchange.getRequestMethod())
+					? "{\"user\":{\"seq\":1},\"assistant\":{\"seq\":2}}".getBytes(StandardCharsets.UTF_8)
+					: full
+							? "{\"seq\":2,\"role\":\"assistant\",\"status\":\"done\",\"createdAt\":1,\"parts\":[{\"kind\":\"text\",\"text\":\"我是 proposal\"}]}"
+									.getBytes(StandardCharsets.UTF_8)
+							: "{\"messages\":[{\"seq\":2,\"role\":\"assistant\",\"status\":\"done\",\"preview\":\"我是 proposal\"}],\"hasMore\":false}"
+									.getBytes(StandardCharsets.UTF_8);
+			exchange.getResponseHeaders().set("Content-Type", "application/json");
+			exchange.sendResponseHeaders(200, payload.length);
+			exchange.getResponseBody().write(payload);
+			exchange.close();
+		});
+		server.start();
+		try {
+			heartbeat("worker-guide", "说明机", server.getAddress().getPort());
+			long projectId = projects.findAll(Sort.by("id")).getFirst().getId();
+			sessions.save(new AgentSessionEntity(projectId, 880030, 0, "worker-guide"));
+			AgentEntity proposal = new AgentEntity(projects.findAll(Sort.by("id")).getFirst(), "guide-proposal", "身份");
+			proposal.retag("proposal");
+			proposal.replaceSkills(List.of("skills/dev-flow/SKILL.md"));
+			agents.save(proposal);
+
+			mockMvc.perform(get("/api/workers/worker-guide/issues/880030/agents/proposal/conversations"))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.messages").isEmpty())
+					.andExpect(jsonPath("$.hasMore").value(false));
+			mockMvc.perform(get("/api/workers/worker-guide/issues/880030/agents/proposal/conversations/2"))
+					.andExpect(status().isNotFound())
+					.andExpect(jsonPath("$.detail").value("这条对话没有。"));
+			assertThat(hits).hasValue(0);
+
+			mockMvc.perform(post("/api/workers/worker-guide/issues/880030/agents/proposal/tasks")
+							.contentType("application/json")
+							.content("{\"text\":\"初始化这张提案\"}"))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.assistant.seq").value(2));
+			assertThat(seen.get()).contains("POST /sessions/880030/messages?agent=" + proposal.getId())
+					.contains("初始化这张提案")
+					.contains("\"agentBody\":\"身份\"")
+					.contains("skills/dev-flow/SKILL.md");
+			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, 880030, proposal.getId())).isPresent();
+
+			mockMvc.perform(get("/api/workers/worker-guide/issues/880030/agents/proposal/conversations"))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.messages[0].preview").value("我是 proposal"))
+					.andExpect(jsonPath("$.hasMore").value(false));
+
+			mockMvc.perform(get("/api/workers/worker-guide/issues/880030/agents/proposal/conversations/2"))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.role").value("assistant"))
+					.andExpect(jsonPath("$.parts[0].text").value("我是 proposal"));
+			assertThat(seen.get()).contains("GET /sessions/880030/conversations/2?agent=" + proposal.getId());
+
+			mockMvc.perform(get("/api/workers/worker-guide/issues/880031/agents/proposal/conversations"))
+					.andExpect(status().isNotFound())
+					.andExpect(jsonPath("$.detail").value("这张 issue 不在这个 worker 上。"));
 		}
 		finally {
 			server.stop(0);

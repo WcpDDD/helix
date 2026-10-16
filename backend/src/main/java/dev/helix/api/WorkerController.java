@@ -217,6 +217,39 @@ public class WorkerController {
 		}
 	}
 
+	@PostMapping("/workers/{id}/issues/{number}/agents/{agent}/tasks")
+	public ResponseEntity<?> task(@PathVariable String id, @PathVariable int number, @PathVariable String agent,
+			@RequestBody String body) {
+		try {
+			return json(agentSessions.dispatch(id, number, agent, body));
+		}
+		catch (ResponseStatusException exception) {
+			return failure(exception);
+		}
+	}
+
+	@GetMapping("/workers/{id}/issues/{number}/agents/{agent}/conversations")
+	public ResponseEntity<?> catalog(@PathVariable String id, @PathVariable int number, @PathVariable String agent,
+			@RequestParam(required = false) Long before) {
+		try {
+			return json(agentSessions.catalog(id, number, agent, before));
+		}
+		catch (ResponseStatusException exception) {
+			return failure(exception);
+		}
+	}
+
+	@GetMapping("/workers/{id}/issues/{number}/agents/{agent}/conversations/{seq}")
+	public ResponseEntity<?> transcript(@PathVariable String id, @PathVariable int number, @PathVariable String agent,
+			@PathVariable long seq) {
+		try {
+			return json(agentSessions.transcript(id, number, agent, seq));
+		}
+		catch (ResponseStatusException exception) {
+			return failure(exception);
+		}
+	}
+
 	@GetMapping("/workers")
 	public List<WorkerView> list() {
 		return registry.list();

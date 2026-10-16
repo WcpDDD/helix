@@ -28,8 +28,8 @@ public final class WorkerProcess {
 		AgentKitRuntime runtime = new AgentKitRuntime(new AgentKitProperties(
 				null, setting("AGENTKIT_MODEL", ""), setting("AGENTKIT_BASE_URL", ""), setting("AGENTKIT_API_KEY", ""), null),
 				root.resolve("agent-sessions"));
-		WorkerSessions sessions = new WorkerSessions(root, System.getenv(), (thread, message, workspace, gitlab, sink) -> runtime.begin(
-				thread, "你在这张 issue 独享的工作区里。只分析仓库和这张 issue。", id, message, workspace, gitlab, sink));
+		WorkerSessions sessions = new WorkerSessions(root, System.getenv(), (thread, message, workspace, gitlab, sink, profile) -> runtime.begin(
+				thread, instructions(profile.body()), id, message, workspace, gitlab, sink, profile.body(), profile.skills()));
 		HttpServer http = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
 		http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 		http.createContext("/", exchange -> WorkerGateway.handle(exchange, sessions));
@@ -42,6 +42,18 @@ public final class WorkerProcess {
 			beat(client, server, id, name, address);
 			Thread.sleep(BEAT);
 		}
+	}
+
+	static String instructions(String agentsMd) {
+		String base = """
+				你在这张 issue 独享的工作区里。
+				工作区根目录的 agents.md 写了三件事：给这张 issue 上的某个 Agent 派任务，读取那个 Agent 的对话目录，以及按 seq 调阅一条完整对话。只使用那里写明的接口。
+				这次只启用了任务列出的 skill。没列进去的 skill 不要用。
+				""";
+		if (agentsMd == null || agentsMd.isBlank()) {
+			return base;
+		}
+		return base + "\n# 这个 Agent 的定义\n\n按这份定义行事。\n\n" + agentsMd.strip() + "\n";
 	}
 
 	private static void beat(HttpClient client, String server, String id, String name, String address) {

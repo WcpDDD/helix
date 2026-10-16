@@ -56,25 +56,8 @@ public final class ConversationBoard {
 			if (!talk.messages.isEmpty() || talk.busy) {
 				return ready(issueNumber);
 			}
-			talk.busy = true;
 		}
-		Path workspace;
-		try {
-			workspace = IssueWorkspace.open(root, issueNumber, environment);
-		}
-		catch (RuntimeException exception) {
-			synchronized (talk.lock) {
-				talk.busy = false;
-			}
-			throw exception;
-		}
-		long assistant = appendPair(talk, WorkerSessions.task(issueNumber), List.of());
-		try {
-			start(talk, issueNumber, assistant, WorkerSessions.task(issueNumber), workspace);
-		}
-		catch (RuntimeException exception) {
-			return new WorkerSessions.Result(503, detail(exception.getMessage()));
-		}
+		IssueWorkspace.open(root, issueNumber, environment);
 		return ready(issueNumber);
 	}
 
@@ -135,7 +118,7 @@ public final class ConversationBoard {
 			prompt = text + "\n\n附件：\n- " + String.join("\n- ", files);
 		}
 		try {
-			start(talk, issueNumber, assistant, prompt, workspace);
+			start(talk, issueNumber, assistant, prompt, workspace, AgentProfile.read(request));
 		}
 		catch (RuntimeException ignored) {
 			// 失败已经写进这条回复。
@@ -298,7 +281,7 @@ public final class ConversationBoard {
 		}
 	}
 
-	private void start(IssueTalk talk, int issueNumber, long assistant, String prompt, Path workspace) {
+	private void start(IssueTalk talk, int issueNumber, long assistant, String prompt, Path workspace, AgentProfile profile) {
 		String threadId;
 		synchronized (talk.lock) {
 			if (talk.threadId == null || talk.threadId.isBlank()) {
@@ -307,8 +290,10 @@ public final class ConversationBoard {
 			}
 			threadId = talk.threadId;
 		}
+		AgentProfile turn = profile == null ? new AgentProfile("", List.of()) : profile;
 		try {
-			runner.start(threadId, prompt, workspace, IssueWorkspace.gitlab(environment), new TurnSink(issueNumber, talk.agentId, assistant));
+			runner.start(threadId, prompt, workspace, IssueWorkspace.gitlab(environment), new TurnSink(issueNumber, talk.agentId, assistant),
+					turn.resolve(workspace));
 		}
 		catch (RuntimeException exception) {
 			finish(issueNumber, talk.agentId, assistant, "failed", safe(exception.getMessage()));
@@ -777,7 +762,8 @@ public final class ConversationBoard {
 
 	@FunctionalInterface
 	public interface Runner {
-		void start(String threadId, String message, Path workspace, Map<String, String> gitlabEnv, RunSink sink);
+		void start(String threadId, String message, Path workspace, Map<String, String> gitlabEnv, RunSink sink,
+				AgentProfile profile);
 	}
 
 	private static final class IssueTalk {

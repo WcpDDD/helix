@@ -39,7 +39,7 @@ class ConversationBoardTest {
 		Path repo = repo();
 		AtomicInteger starts = new AtomicInteger();
 		ConversationBoard board = new ConversationBoard(temp.resolve("workers"), Map.of("HELIX_REPO", repo.toString()),
-				(thread, message, workspace, env, sink) -> {
+				(thread, message, workspace, env, sink, profile) -> {
 					starts.incrementAndGet();
 					sink.onChunk(new ExecutionChunk(null, "先看一下", List.of(), null));
 					sink.onEvent(new ExecutionEvent.ToolStarted(1, "call-1", "read", "{\"path\":\"README.md\"}"));
@@ -81,7 +81,7 @@ class ConversationBoardTest {
 	@Test
 	void rejectsASecondMessageWhileTheFirstIsRunning() throws Exception {
 		ConversationBoard board = new ConversationBoard(temp.resolve("workers"), Map.of("HELIX_REPO", repo().toString()),
-				(thread, message, workspace, env, sink) -> {
+				(thread, message, workspace, env, sink, profile) -> {
 				});
 
 		assertThat(board.send(21, "{\"text\":\"第一句\"}").status()).isEqualTo(200);
@@ -95,7 +95,7 @@ class ConversationBoardTest {
 	void attachmentStaysInsideTheWorkspace() throws Exception {
 		Path repo = repo();
 		ConversationBoard board = new ConversationBoard(temp.resolve("workers"), Map.of("HELIX_REPO", repo.toString()),
-				(thread, message, workspace, env, sink) -> sink.onEvent(
+				(thread, message, workspace, env, sink, profile) -> sink.onEvent(
 						new ExecutionEvent.RunEnded(ExecutionPhase.COMPLETED, "好", null, null)));
 
 		assertThat(board.send(21, "{\"text\":\"越界\",\"files\":[\"../secret\"]}").status()).isEqualTo(400);
@@ -111,10 +111,10 @@ class ConversationBoardTest {
 	void interruptedTurnIsFailedAfterRestart() throws Exception {
 		Path root = temp.resolve("workers");
 		Map<String, String> env = Map.of("HELIX_REPO", repo().toString());
-		new ConversationBoard(root, env, (thread, message, workspace, gitlab, sink) -> {
+		new ConversationBoard(root, env, (thread, message, workspace, gitlab, sink, profile) -> {
 		}).send(21, "{\"text\":\"半截\"}");
 
-		JsonNode page = json.readTree(new ConversationBoard(root, env, (thread, message, workspace, gitlab, sink) -> {
+		JsonNode page = json.readTree(new ConversationBoard(root, env, (thread, message, workspace, gitlab, sink, profile) -> {
 		}).list(21, null).body());
 
 		assertThat(page.path("messages").get(1).path("status").asString()).isEqualTo("failed");
@@ -127,7 +127,7 @@ class ConversationBoardTest {
 		List<String> prompts = new ArrayList<>();
 		Path root = temp.resolve("workers");
 		Map<String, String> env = Map.of("HELIX_REPO", repo().toString());
-		ConversationBoard.Runner runner = (thread, message, workspace, gitlab, sink) -> {
+		ConversationBoard.Runner runner = (thread, message, workspace, gitlab, sink, profile) -> {
 			threads.add(thread);
 			prompts.add(message);
 			sink.onEvent(new ExecutionEvent.RunEnded(ExecutionPhase.COMPLETED, "好", null, null));
@@ -153,7 +153,7 @@ class ConversationBoardTest {
 		List<String> threads = new ArrayList<>();
 		Path root = temp.resolve("workers");
 		Map<String, String> env = Map.of("HELIX_REPO", repo().toString());
-		ConversationBoard board = new ConversationBoard(root, env, (thread, message, workspace, gitlab, sink) -> {
+		ConversationBoard board = new ConversationBoard(root, env, (thread, message, workspace, gitlab, sink, profile) -> {
 			threads.add(thread);
 			sink.onEvent(new ExecutionEvent.RunEnded(ExecutionPhase.COMPLETED, message, null, null));
 		});
@@ -172,9 +172,10 @@ class ConversationBoardTest {
 	@Test
 	void gatewayListsAPage() throws Exception {
 		WorkerSessions sessions = new WorkerSessions(temp.resolve("workers"), Map.of("HELIX_REPO", repo().toString()),
-				(thread, message, workspace, env, sink) -> sink.onEvent(
+				(thread, message, workspace, env, sink, profile) -> sink.onEvent(
 						new ExecutionEvent.RunEnded(ExecutionPhase.COMPLETED, "好", null, null)));
 		sessions.accept("{\"issueNumber\":21}");
+		sessions.send(21, "{\"text\":\"看一下\"}");
 		HttpServer server = HttpServer.create(new java.net.InetSocketAddress("127.0.0.1", 0), 0);
 		server.createContext("/", exchange -> WorkerGateway.handle(exchange, sessions));
 		server.start();
@@ -185,7 +186,7 @@ class ConversationBoardTest {
 			assertThat(response.statusCode()).isEqualTo(200);
 			JsonNode page = json.readTree(response.body());
 			assertThat(page.path("messages")).hasSize(2);
-			assertThat(page.path("messages").get(0).path("preview").asString()).contains("issue #21");
+			assertThat(page.path("messages").get(0).path("preview").asString()).contains("看一下");
 		}
 		finally {
 			server.stop(0);

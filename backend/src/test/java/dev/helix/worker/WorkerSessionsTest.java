@@ -47,6 +47,10 @@ class WorkerSessionsTest {
 		assertThat(first).isEqualTo(root.resolve("issue-21"));
 		assertThat(second).isEqualTo(root.resolve("issue-22"));
 		assertThat(Files.readString(first.resolve("README.md"))).isEqualTo("hello");
+		assertThat(Files.readString(first.resolve("agents.md"))).contains("#21").contains("/agents/{agent}/tasks")
+				.contains("/agents/{agent}/conversations")
+				.contains("/agents/{agent}/conversations/{seq}");
+		assertThat(gitText(first, "status", "--short")).doesNotContain("agents.md");
 		assertThat(IssueWorkspace.open(root, 21, env)).isEqualTo(first);
 		assertThatThrownBy(() -> IssueWorkspace.open(root, 23, Map.of()))
 				.isInstanceOf(WorkspaceException.class)
@@ -79,6 +83,7 @@ class WorkerSessionsTest {
 		Path repo = temp.resolve("repo");
 		AtomicReference<String> message = new AtomicReference<>();
 		AtomicReference<Map<String, String>> gitlab = new AtomicReference<>();
+		AtomicReference<AgentProfile> turn = new AtomicReference<>();
 		try {
 			Files.createDirectories(repo);
 			git(repo, "init");
@@ -95,24 +100,85 @@ class WorkerSessionsTest {
 				"HELIX_REPO", repo.toString(),
 				"GITLAB_HOST", "https://hackers.oalite.com",
 				"GITLAB_PROJECT", "qingflow-develop/qingflow-workspace",
-				"AGENTKIT_API_KEY", "llm"), (thread, text, workspace, env, sink) -> {
+				"AGENTKIT_API_KEY", "llm"), (thread, text, workspace, env, sink, profile) -> {
 					message.set(text);
 					gitlab.set(env);
+					turn.set(profile);
 					assertThat(workspace).isEqualTo(temp.resolve("workers/issue-21"));
 				});
 
-		WorkerSessions.Result result = sessions.accept("{\"issueNumber\":21}");
+		WorkerSessions.Result created = sessions.accept("{\"issueNumber\":21}");
+		WorkerSessions.Result page = sessions.list(21, null);
+		WorkerSessions.Result sent = sessions.send(21, "{\"text\":\"看一下\"}");
 
-		assertThat(result.status()).isEqualTo(200);
-		assertThat(result.body()).isEqualTo("{\"id\":\"issue-21\"}");
-		assertThat(message.get()).contains("issue #21").contains("GITLAB_");
+		assertThat(created.status()).isEqualTo(200);
+		assertThat(created.body()).isEqualTo("{\"id\":\"issue-21\"}");
+		assertThat(page.body()).contains("\"messages\":[]");
+		assertThat(sent.status()).isEqualTo(200);
+		assertThat(message.get()).isEqualTo("看一下");
 		assertThat(gitlab.get()).containsEntry("GITLAB_HOST", "https://hackers.oalite.com")
 				.doesNotContainKey("AGENTKIT_API_KEY");
+		assertThat(turn.get().body()).isEmpty();
+		assertThat(turn.get().skills()).containsExactly(IssueWorkspace.NO_SKILL);
+	}
+
+	@Test
+	void turnEnablesOnlyTheRequestedSkill() throws Exception {
+		Path repo = temp.resolve("repo");
+		Files.createDirectories(repo.resolve("skills/dev-flow"));
+		Files.createDirectories(repo.resolve("skills/group/writing"));
+		Files.createDirectories(repo.resolve("skills/plain"));
+		git(repo, "init");
+		git(repo, "config", "user.email", "worker@helix.test");
+		git(repo, "config", "user.name", "worker");
+		Files.writeString(repo.resolve("README.md"), "hello");
+		Files.writeString(repo.resolve("skills/dev-flow/SKILL.md"), """
+				---
+				name: dev-flow
+				description: 开发
+				---
+				按这个流程做。
+				""");
+		Files.writeString(repo.resolve("skills/group/writing/SKILL.md"), """
+				---
+				name: "writing"
+				description: 写作
+				---
+				写。
+				""");
+		Files.writeString(repo.resolve("skills/plain/note.md"), "不是技能");
+		git(repo, "add", ".");
+		git(repo, "commit", "-m", "init");
+		AtomicReference<AgentProfile> turn = new AtomicReference<>();
+		WorkerSessions sessions = new WorkerSessions(temp.resolve("workers"), Map.of("HELIX_REPO", repo.toString()),
+				(thread, text, workspace, env, sink, profile) -> turn.set(profile));
+
+		WorkerSessions.Result created = sessions.accept("""
+				{"issueNumber":21,"agentBody":"你是 arch。","skills":["skills/dev-flow/SKILL.md","../secret/SKILL.md"]}
+				""");
+		WorkerSessions.Result sent = sessions.send(21, """
+				{"text":"开始","agentBody":"你是 arch。","skills":["skills/dev-flow/SKILL.md","../secret/SKILL.md"]}
+				""");
+
+		assertThat(created.status()).isEqualTo(200);
+		assertThat(sent.status()).isEqualTo(200);
+		Path space = temp.resolve("workers/issue-21");
+		assertThat(turn.get().body()).isEqualTo("你是 arch。");
+		assertThat(turn.get().skills()).containsExactly("dev-flow");
+		assertThat(Files.readSymbolicLink(space.resolve(".agents/skills/dev-flow")))
+				.isEqualTo(Path.of("..", "..", "skills", "dev-flow"));
+		assertThat(Files.readSymbolicLink(space.resolve(".agents/skills/writing")))
+				.isEqualTo(Path.of("..", "..", "skills", "group", "writing"));
+		assertThat(space.resolve(".agents/skills/plain")).doesNotExist();
+		assertThat(IssueWorkspace.enabledSkills(space, java.util.List.of())).containsExactly(IssueWorkspace.NO_SKILL);
+		assertThat(IssueWorkspace.open(temp.resolve("workers"), 21, Map.of("HELIX_REPO", repo.toString()))).isEqualTo(space);
+		assertThat(WorkerProcess.instructions("你是 arch。")).contains("你是 arch。").contains("agents.md");
+		assertThat(WorkerProcess.instructions("  ")).doesNotContain("这个 Agent 的定义");
 	}
 
 	@Test
 	void missingIssueNumberDoesNotStart() {
-		WorkerSessions sessions = new WorkerSessions(temp, Map.of(), (thread, message, workspace, env, sink) -> {
+		WorkerSessions sessions = new WorkerSessions(temp, Map.of(), (thread, message, workspace, env, sink, profile) -> {
 			throw new AssertionError("不应该启动");
 		});
 
@@ -121,9 +187,15 @@ class WorkerSessionsTest {
 		assertThat(result.status()).isEqualTo(400);
 	}
 
-	private static void git(Path directory, String... args) throws Exception {
+	private static String gitText(Path directory, String... args) throws Exception {
 		Process process = new ProcessBuilder(prepend(args)).directory(directory.toFile()).start();
+		String output = new String(process.getInputStream().readAllBytes());
 		assertThat(process.waitFor()).isEqualTo(0);
+		return output;
+	}
+
+	private static void git(Path directory, String... args) throws Exception {
+		gitText(directory, args);
 	}
 
 	private static String[] prepend(String... args) {

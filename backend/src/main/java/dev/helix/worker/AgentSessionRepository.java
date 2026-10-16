@@ -12,4 +12,6 @@ public interface AgentSessionRepository extends JpaRepository<AgentSessionEntity
 
 	java.util.List<AgentSessionEntity> findByProjectIdAndIssueNumberOrderByAgentIdAsc(long projectId, int issueNumber);
 
+	java.util.List<AgentSessionEntity> findByWorkerIdAndIssueNumber(String workerId, int issueNumber);
+
 }

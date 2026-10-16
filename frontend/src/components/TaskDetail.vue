@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote } from '@/api/client'
 import TaskNext from '@/components/TaskNext.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
+import { agentTags } from '@/data/agentTags'
 import { renderMarkdown } from '@/markdown'
 import {
   issueLayers,
@@ -22,15 +23,20 @@ const emit = defineEmits<{
   close: []
 }>()
 
-type ShownMessage = ConversationMessage & { agentId: number; agentName: string }
+type ShownMessage = ConversationMessage & { agentId: number; agentName: string; agentTag: string }
+type Relay = { fromName: string; fromTag: string }
 
-const pane = ref<'issue' | 'agent'>('issue')
+const pane = ref<'issue' | 'goal' | 'agent'>('issue')
+const sessionFull = ref(false)
+const goalDraft = ref('')
+const goalText = ref('')
 const seats = ref<IssueAgent[]>([])
 const focusAgent = ref<'group' | number>('group')
 const sessionState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const creating = ref(false)
 const createError = ref('')
 const messages = ref<ShownMessage[]>([])
+const relayMessages = ref<ShownMessage[]>([])
 const hasMore = ref(false)
 const loadingOlder = ref(false)
 const threadState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -44,6 +50,17 @@ let sessionRequest = 0
 let threadRequest = 0
 const streams = new Map<string, EventSource>()
 const currentSeat = computed(() => seats.value.find((seat) => seat.agentId === focusAgent.value) ?? null)
+const orderedSeats = computed(() =>
+  [...seats.value].sort((left, right) => {
+    const rank = stageRank(left.tag) - stageRank(right.tag)
+    return rank !== 0 ? rank : left.name.localeCompare(right.name, 'zh')
+  }),
+)
+
+function stageRank(tag: string): number {
+  const index = agentTags.indexOf(tag as (typeof agentTags)[number])
+  return index < 0 ? agentTags.length : index
+}
 let stickToBottom = true
 const bodyEl = ref<HTMLElement | null>(null)
 const selectedId = ref(defaultIssueId(props.task))
@@ -60,6 +77,7 @@ watch(
     selectedId.value = defaultIssueId(props.task)
     selectedEdgeId.value = ''
     focus.value = 'issue'
+    sessionFull.value = false
     await nextTick()
     bodyEl.value?.scrollTo({ top: 0 })
   },
@@ -114,6 +132,7 @@ async function loadRoster(number: string) {
   sessionState.value = 'loading'
   createError.value = ''
   focusAgent.value = 'group'
+  relayMessages.value = []
   try {
     const next = await fetchIssueAgents(number)
     if (request !== sessionRequest) return
@@ -181,10 +200,22 @@ const hiddenNotes = computed(() => (issueNotes.value.length > 3 ? issueNotes.val
 const leadingNotes = computed(() => (hiddenNotes.value.length > 0 ? issueNotes.value.slice(0, 1) : issueNotes.value))
 const trailingNotes = computed(() => (hiddenNotes.value.length > 0 ? issueNotes.value.slice(-1) : []))
 
+function commitGoal() {
+  const text = goalDraft.value.trim()
+  goalText.value = text || '做到测试通过'
+}
+
+function clearGoal() {
+  goalText.value = ''
+  goalDraft.value = ''
+}
+
 watch(
   () => issueView.value.id,
   (id) => {
     const requestId = id
+    goalDraft.value = ''
+    goalText.value = ''
     issueBody.value = ''
     issueBodyState.value = 'loading'
     issueNotes.value = []
@@ -274,6 +305,10 @@ function onKeydown(event: KeyboardEvent) {
     fileView.value = null
     return
   }
+  if (sessionFull.value) {
+    sessionFull.value = false
+    return
+  }
   emit('close')
 }
 
@@ -292,7 +327,9 @@ async function loadGroup(number: string) {
   try {
     const pages = await Promise.all(seated.map((seat) => readPage(number, seat, undefined)))
     if (request !== threadRequest) return
-    messages.value = pages.flat().sort(byTime)
+    const flat = pages.flat().sort(byTime)
+    relayMessages.value = flat
+    messages.value = flat
     hasMore.value = false
     threadState.value = 'ready'
     stickToBottom = true
@@ -317,7 +354,7 @@ async function loadThread(number: string, agentId: number, agentName: string) {
   try {
     const page = await fetchAgentConversations(number, agentId)
     if (request !== threadRequest) return
-    const full = await Promise.all(page.messages.map((item) => stamp(number, agentId, agentName, item.seq)))
+    const full = await Promise.all(page.messages.map((item) => stamp(number, agentId, agentName, currentSeat.value?.tag ?? '', item.seq)))
     if (request !== threadRequest) return
     messages.value = full
     hasMore.value = page.hasMore
@@ -327,6 +364,7 @@ async function loadThread(number: string, agentId: number, agentName: string) {
     scrollThreadToEnd()
     const last = full[full.length - 1]
     if (last?.role === 'assistant' && last.status === 'running') watchStream(number, agentId, last.seq)
+    void warmRelays(number, request)
   } catch {
     if (request !== threadRequest) return
     messages.value = []
@@ -336,12 +374,138 @@ async function loadThread(number: string, agentId: number, agentName: string) {
 
 async function readPage(number: string, seat: IssueAgent, before?: number): Promise<ShownMessage[]> {
   const page = await fetchAgentConversations(number, seat.agentId, before)
-  return Promise.all(page.messages.map((item) => stamp(number, seat.agentId, seat.name, item.seq)))
+  return Promise.all(page.messages.map((item) => stamp(number, seat.agentId, seat.name, seat.tag, item.seq)))
 }
 
-async function stamp(number: string, agentId: number, agentName: string, seq: number): Promise<ShownMessage> {
+async function stamp(number: string, agentId: number, agentName: string, agentTag: string, seq: number): Promise<ShownMessage> {
   const message = await fetchAgentConversation(number, agentId, seq)
-  return { ...message, agentId, agentName }
+  return { ...message, agentId, agentName, agentTag }
+}
+
+async function warmRelays(number: string, request: number) {
+  if (relayMessages.value.length > 0) return
+  const seated = seats.value.filter((seat) => seat.assigned && seat.alive)
+  try {
+    const pages = await Promise.all(seated.map((seat) => readPage(number, seat)))
+    if (request !== threadRequest) return
+    relayMessages.value = pages.flat()
+  } catch {
+    relayMessages.value = []
+  }
+}
+
+const relays = computed(() => indexRelays(focusAgent.value === 'group' ? messages.value : relayMessages.value))
+
+function indexRelays(list: ShownMessage[]): Map<string, Relay> {
+  const found = new Map<string, Relay>()
+  for (const message of list) {
+    if (message.role !== 'assistant') continue
+    for (const part of message.parts) {
+      if (part.kind !== 'tool') continue
+      const raw = `${part.arguments ?? ''}\n${part.observation ?? ''}`
+      for (const sent of sentTasks(raw)) {
+        const target = seatByKey(sent.target)
+        if (!target || target.agentId === message.agentId || !sent.text) continue
+        found.set(`${target.agentId}\u0000${sent.text}`, { fromName: message.agentName, fromTag: message.agentTag })
+      }
+    }
+  }
+  return found
+}
+
+function seatByKey(key: string): IssueAgent | undefined {
+  if (/^\d+$/.test(key)) return seats.value.find((seat) => String(seat.agentId) === key)
+  return seats.value.find((seat) => seat.tag === key || seat.name === key)
+}
+
+function sentTasks(raw: string): { target: string; text: string }[] {
+  const found: { target: string; text: string }[] = []
+  const marks = raw.matchAll(/\/agents\/([^/\\\s"'?]+)\/tasks/g)
+  for (const mark of marks) {
+    const start = Math.max(0, mark.index - 800)
+    const window = raw.slice(start, mark.index + 4000)
+    const text = readTaskText(window)
+    if (text) found.push({ target: mark[1], text })
+  }
+  return found
+}
+
+function readTaskText(source: string): string {
+  const plain = source.match(/"text"\s*:\s*"((?:\\.|[^"\\])*)"/)
+  if (plain) return decodeTaskText(plain[1])
+  const escaped = source.match(/\\"text\\"\s*:\s*\\"((?:\\.|[^"\\])*)\\"/)
+  return escaped ? decodeTaskText(escaped[1]) : ''
+}
+
+function decodeTaskText(value: string): string {
+  try {
+    return JSON.parse(`"${value}"`).trim()
+  } catch {
+    return value.trim()
+  }
+}
+
+function messageText(message: ShownMessage): string {
+  return message.parts.filter((part) => part.kind === 'text' && part.text).map((part) => part.text ?? '').join('\n').trim()
+}
+
+function relayOf(message: ShownMessage): Relay | undefined {
+  if (message.role !== 'user') return undefined
+  const text = messageText(message)
+  return text ? relays.value.get(`${message.agentId}\u0000${text}`) : undefined
+}
+
+function place(message: ShownMessage): 'user' | 'relay' | 'assistant' {
+  if (relayOf(message)) return 'relay'
+  return message.role === 'user' ? 'user' : 'assistant'
+}
+
+function showIdentity(message: ShownMessage): boolean {
+  return focusAgent.value === 'group' || place(message) === 'relay'
+}
+
+function messageClock(ms: number): string {
+  const date = new Date(ms)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const clock = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', hourCycle: 'h23' }).format(date)
+  const sameDay = date.getFullYear() === now.getFullYear() && date.getMonth() === now.getMonth() && date.getDate() === now.getDate()
+  if (sameDay) return clock
+  const day = new Intl.DateTimeFormat('zh-CN', { month: 'numeric', day: 'numeric' }).format(date)
+  return `${day} ${clock}`
+}
+
+function messageStamp(ms: number): string {
+  const date = new Date(ms)
+  return Number.isNaN(date.getTime()) ? '' : date.toISOString()
+}
+
+function showTimeNode(index: number): boolean {
+  const message = messages.value[index]
+  if (!message) return false
+  if (index === 0) return true
+  return messageClock(message.createdAt) !== messageClock(messages.value[index - 1].createdAt)
+}
+
+function identity(message: ShownMessage): { mark: string; name: string; tag: string; toward: string } {
+  const relay = relayOf(message)
+  if (relay) {
+    return {
+      mark: relay.fromName.slice(0, 1) || '·',
+      name: relay.fromName,
+      tag: relay.fromTag === relay.fromName ? '' : relay.fromTag,
+      toward: message.agentTag || message.agentName,
+    }
+  }
+  if (message.role === 'user') {
+    return { mark: '你', name: '你', tag: '', toward: message.agentTag || message.agentName }
+  }
+  return {
+    mark: message.agentName.slice(0, 1) || '·',
+    name: message.agentName,
+    tag: message.agentTag === message.agentName ? '' : message.agentTag,
+    toward: '',
+  }
 }
 
 function byTime(left: ShownMessage, right: ShownMessage): number {
@@ -361,7 +525,7 @@ async function loadOlder() {
   try {
     const page = await fetchAgentConversations(number, seat.agentId, oldest.seq)
     if (request !== threadRequest) return
-    const full = await Promise.all(page.messages.map((item) => stamp(number, seat.agentId, seat.name, item.seq)))
+    const full = await Promise.all(page.messages.map((item) => stamp(number, seat.agentId, seat.name, seat.tag, item.seq)))
     if (request !== threadRequest) return
     messages.value = [...full, ...messages.value]
     hasMore.value = page.hasMore
@@ -391,8 +555,8 @@ async function send() {
   try {
     const sent = await sendAgentConversation(number, seat.agentId, text)
     draft.value = ''
-    const user = { ...sent.user, agentId: seat.agentId, agentName: seat.name }
-    const assistant = { ...sent.assistant, agentId: seat.agentId, agentName: seat.name }
+    const user = { ...sent.user, agentId: seat.agentId, agentName: seat.name, agentTag: seat.tag }
+    const assistant = { ...sent.assistant, agentId: seat.agentId, agentName: seat.name, agentTag: seat.tag }
     messages.value = messages.value.filter((message) => message.agentId !== seat.agentId || (message.seq !== user.seq && message.seq !== assistant.seq))
     messages.value.push(user, assistant)
     stickToBottom = true
@@ -444,7 +608,7 @@ function watchStream(number: string, agentId: number, seq: number) {
     const { index, message } = current()
     if (index < 0 || !message) return
     if (kind === 'snapshot') {
-      put(index, { ...(data as ConversationMessage), agentId, agentName: message.agentName })
+      put(index, { ...(data as ConversationMessage), agentId, agentName: message.agentName, agentTag: message.agentTag })
       return
     }
     if (kind === 'done') {
@@ -485,7 +649,7 @@ function watchStream(number: string, agentId: number, seq: number) {
     void fetchAgentConversation(number, agentId, seq).then((fresh) => {
       if (streams.get(key) !== source) return
       const { index, message } = current()
-      if (index >= 0 && message) messages.value[index] = { ...fresh, agentId, agentName: message.agentName }
+      if (index >= 0 && message) messages.value[index] = { ...fresh, agentId, agentName: message.agentName, agentTag: message.agentTag }
       if (fresh.status !== 'running') {
         source.close()
         if (streams.get(key) === source) streams.delete(key)
@@ -574,6 +738,9 @@ onUnmounted(() => {
       <div class="panes" role="tablist" aria-label="详情内容">
         <button type="button" role="tab" :aria-selected="pane === 'issue'" :class="{ on: pane === 'issue' }" @click="pane = 'issue'">
           Issue 信息
+        </button>
+        <button type="button" role="tab" :aria-selected="pane === 'goal'" :class="{ on: pane === 'goal' }" @click="pane = 'goal'">
+          目标
         </button>
         <button type="button" role="tab" :aria-selected="pane === 'agent'" :class="{ on: pane === 'agent' }" @click="pane = 'agent'">
           Agent 会话
@@ -728,14 +895,40 @@ onUnmounted(() => {
       </template>
     </div>
 
-    <div v-else class="session-pane">
+    <div v-else-if="pane === 'goal'" class="goal-pane">
+      <p class="goal-kicker">目标模式</p>
+      <h3 class="goal-title">委托 Agent 开发</h3>
+      <p class="goal-lead">写下这张 issue 要做到的结果。留空，就做到测试通过。manager 按 issue 和 MR 的实际状态调度已配置的 Agent，做完后交给你确认。</p>
+      <template v-if="!goalText">
+        <label class="goal-field">
+          <span>目标</span>
+          <textarea v-model="goalDraft" rows="5" placeholder="做到测试通过" />
+        </label>
+        <button type="button" class="goal-start" @click="commitGoal">委托开发</button>
+      </template>
+      <template v-else>
+        <div class="goal-card">
+          <h3>目标</h3>
+          <p>{{ goalText }}</p>
+        </div>
+        <ol class="goal-phases" aria-label="目标进度">
+          <li class="on"><span>1</span>初始化</li>
+          <li><span>2</span>轮转</li>
+          <li><span>3</span>待确认</li>
+        </ol>
+        <p class="goal-status">停在初始化。manager 看着 issue 和 MR，决定下一步派谁。</p>
+        <button type="button" class="goal-stop" @click="clearGoal">结束委托</button>
+      </template>
+    </div>
+
+    <div v-else class="session-pane" :class="{ full: sessionFull }">
+      <div class="session-bar">
       <p v-if="sessionState === 'loading'" class="empty">正在读取会话。</p>
       <p v-else-if="sessionState === 'error'" class="empty">会话没有读到。</p>
-      <template v-else>
-      <nav class="agent-switch" aria-label="Agent">
+      <nav v-else class="agent-switch" aria-label="Agent">
         <button type="button" :class="{ on: focusAgent === 'group' }" @click="selectAgent('group')">群聊</button>
         <button
-          v-for="seat in seats"
+          v-for="seat in orderedSeats"
           :key="seat.agentId"
           type="button"
           :class="{ on: focusAgent === seat.agentId }"
@@ -745,6 +938,11 @@ onUnmounted(() => {
           <em v-if="seat.tag">{{ seat.tag }}</em>
         </button>
       </nav>
+      <button type="button" class="session-full" @click="sessionFull = !sessionFull">
+        {{ sessionFull ? '退出全屏' : '全屏' }}
+      </button>
+      </div>
+      <template v-if="sessionState === 'ready'">
       <p v-if="seats.length === 0" class="empty">这个项目还没有 Agent。</p>
       <div v-else-if="focusAgent !== 'group' && !currentSeat?.assigned" class="session-mask">
         <p>{{ currentSeat?.name }} 还没有自己的会话。</p>
@@ -768,24 +966,34 @@ onUnmounted(() => {
               {{ loadingOlder ? '正在读取更早的消息' : '更早的消息' }}
             </button>
           </li>
-          <li v-for="message in messages" :key="`${message.agentId}-${message.seq}`" :class="message.role">
+          <template v-for="(message, index) in messages" :key="`${message.agentId}-${message.seq}`">
+          <li v-if="showTimeNode(index)" class="time-node">
+            <time :datetime="messageStamp(message.createdAt)">{{ messageClock(message.createdAt) }}</time>
+          </li>
+          <li :class="place(message)">
             <div class="bubble">
-              <p v-if="focusAgent === 'group'" class="speaker">
-                {{ message.role === 'user' ? `你 → ${message.agentName}` : message.agentName }}
-              </p>
+              <div class="speaker" :class="{ bare: !showIdentity(message) }">
+                <template v-if="showIdentity(message)">
+                  <span class="avatar">{{ identity(message).mark }}</span>
+                  <strong>{{ identity(message).name }}</strong>
+                  <em v-if="identity(message).tag">{{ identity(message).tag }}</em>
+                  <span v-if="identity(message).toward" class="toward">发给 {{ identity(message).toward }}</span>
+                </template>
+                <time class="when" :datetime="messageStamp(message.createdAt)">{{ messageClock(message.createdAt) }}</time>
+              </div>
               <template v-for="(part, index) in message.parts" :key="`${message.seq}-${index}`">
                 <details v-if="part.kind === 'thinking'" class="thinking" :open="message.status === 'running'">
                   <summary>思考</summary>
                   <p>{{ part.text }}</p>
                 </details>
-                <div v-else-if="part.kind === 'tool'" class="tool">
-                  <div class="tool-name">
+                <details v-else-if="part.kind === 'tool'" class="tool" :open="part.status != null && part.status !== 'done'">
+                  <summary>
                     <span>{{ part.name || '工具' }}</span>
                     <em>{{ part.status === 'done' ? '完成' : '进行中' }}</em>
-                  </div>
+                  </summary>
                   <pre v-if="part.arguments">{{ part.arguments }}</pre>
                   <pre v-if="part.observation">{{ part.observation }}</pre>
-                </div>
+                </details>
                 <button v-else-if="part.kind === 'file'" type="button" class="file-ref" @click="openAttachment(part.path, message.agentId)">
                   {{ part.name || part.path }}
                 </button>
@@ -795,6 +1003,7 @@ onUnmounted(() => {
               <p v-else-if="message.status === 'failed'" class="create-error">这轮没有完成。</p>
             </div>
           </li>
+          </template>
           <li v-if="messages.length === 0" class="thread-empty">
             <p class="empty">还没有消息。</p>
           </li>
@@ -1202,6 +1411,8 @@ dd,
 }
 
 .issue-body :deep(pre) {
+  max-width: 100%;
+  min-width: 0;
   overflow: auto;
   padding: 12px 14px;
   border-radius: 12px;
@@ -1272,9 +1483,15 @@ h3 {
   display: grid;
   gap: 12px;
   min-width: 0;
+  max-width: 100%;
   margin: 0;
   padding: 0;
   list-style: none;
+}
+
+.thread > li {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .comment,
@@ -1356,13 +1573,27 @@ h3 {
   font-size: 13px;
 }
 
-.agent-switch {
+.session-bar {
   display: flex;
   flex: none;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
   margin: 0 0 16px;
+}
+
+.session-bar > .empty {
+  flex: 1;
+  margin: 0;
+}
+
+.agent-switch {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin: 0;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -1403,7 +1634,102 @@ h3 {
   color: var(--accent);
 }
 
-.speaker,
+.session-full {
+  flex: none;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.session-pane.full {
+  position: fixed;
+  inset: 12px;
+  z-index: 40;
+  overflow: visible;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  box-shadow: 0 18px 50px rgba(40, 32, 20, 0.18);
+}
+
+.session-pane.full::before {
+  content: '';
+  position: fixed;
+  inset: -12px;
+  z-index: -1;
+  background: rgba(28, 25, 20, 0.32);
+}
+
+.speaker {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 8px;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.speaker strong {
+  font-weight: 650;
+}
+
+.speaker em,
+.speaker .toward {
+  font-style: normal;
+  font-size: 12px;
+}
+
+.speaker em {
+  border-radius: 999px;
+  padding: 1px 7px;
+  background: white;
+  color: var(--accent);
+  font-weight: 650;
+}
+
+.speaker .toward,
+.speaker .when {
+  color: var(--muted);
+}
+
+.speaker .when {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.speaker.bare {
+  margin-bottom: 4px;
+}
+
+.time-node {
+  display: flex;
+  justify-content: center;
+}
+
+.time-node time {
+  border-radius: 999px;
+  padding: 2px 10px;
+  background: #f3efe6;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.thread li.user .speaker {
+  justify-content: flex-end;
+}
+
+.thread li.user .speaker .when {
+  margin-left: 8px;
+}
+
 .group-note {
   margin: 0 0 6px;
   color: var(--muted);
@@ -1431,7 +1757,9 @@ h3 {
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
+  overflow: hidden;
   padding: 16px 22px 0;
 }
 
@@ -1499,6 +1827,7 @@ h3 {
   display: flex;
   flex: 1;
   flex-direction: column;
+  min-width: 0;
   min-height: 0;
   overflow: hidden;
 }
@@ -1516,6 +1845,10 @@ h3 {
   justify-content: flex-end;
 }
 
+.thread li.user .bubble {
+  background: var(--accent-soft);
+}
+
 .older {
   display: flex;
   justify-content: center;
@@ -1528,31 +1861,63 @@ h3 {
 }
 
 .thinking summary,
-.tool-name {
+.tool summary {
   cursor: pointer;
   color: var(--muted);
   font-size: 12px;
   font-weight: 650;
 }
 
-.tool-name {
+.tool summary {
   display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  cursor: default;
+  align-items: baseline;
+  gap: 8px;
 }
 
-.tool-name em {
+.tool summary::-webkit-details-marker {
+  display: none;
+}
+
+.tool summary::before {
+  content: '';
+  flex: none;
+  align-self: center;
+  width: 0;
+  height: 0;
+  border-top: 4px solid transparent;
+  border-bottom: 4px solid transparent;
+  border-left: 5px solid var(--muted);
+}
+
+.tool[open] summary::before {
+  border-top: 5px solid var(--muted);
+  border-right: 4px solid transparent;
+  border-bottom: 0;
+  border-left: 4px solid transparent;
+}
+
+.tool summary span {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool summary em {
+  flex: none;
   font-style: normal;
   font-weight: 500;
 }
 
 .thinking p,
 .tool pre {
+  max-width: 100%;
   max-height: 180px;
   overflow: auto;
   margin: 6px 0 0;
   white-space: pre-wrap;
+  overflow-wrap: anywhere;
   color: var(--muted);
   font-size: 12px;
   line-height: 1.45;
@@ -1627,11 +1992,17 @@ h3 {
 }
 
 .bubble {
+  box-sizing: border-box;
   width: fit-content;
-  max-width: 86%;
+  min-width: 0;
+  max-width: min(720px, 100%);
   padding: 10px 12px;
   border-radius: 14px;
   background: #f6f3ec;
+}
+
+.thread li.assistant .bubble {
+  width: min(720px, 100%);
 }
 
 .human .bubble {
@@ -1677,6 +2048,137 @@ textarea {
 .reply button:disabled {
   opacity: 0.45;
   cursor: default;
+}
+
+.goal-pane {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 18px 22px 28px;
+}
+
+.goal-kicker {
+  margin: 0 0 6px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.goal-title {
+  margin: 0 0 8px;
+  font-size: 20px;
+  line-height: 1.35;
+}
+
+.goal-lead {
+  max-width: 40em;
+  margin: 0 0 18px;
+  color: var(--muted);
+}
+
+.goal-field {
+  display: grid;
+  gap: 8px;
+  max-width: 40em;
+}
+
+.goal-field span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.goal-field textarea {
+  width: 100%;
+  min-height: 120px;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+  color: var(--ink);
+  font: inherit;
+}
+
+.goal-start,
+.goal-stop {
+  margin-top: 14px;
+  border-radius: 999px;
+  padding: 8px 16px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.goal-start {
+  border: 0;
+  background: var(--accent);
+  color: #fff;
+  font-weight: 650;
+}
+
+.goal-card {
+  max-width: 40em;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #fff;
+}
+
+.goal-card p {
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.goal-phases {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 16px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.goal-phases li {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+  padding: 0 12px 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--paper);
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.goal-phases li span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  background: #fff;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.goal-phases li.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.goal-status {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.goal-stop {
+  border: 1px solid var(--line);
+  background: transparent;
+  color: var(--ink);
 }
 
 .issue-actions {

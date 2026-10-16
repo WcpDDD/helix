@@ -2,6 +2,7 @@ package dev.helix.agentkit;
 
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -95,7 +96,12 @@ public class AgentKitRuntime {
 
 	public void begin(String threadId, String systemPrompt, String callerId, String message, Path workspace,
 			Map<String, String> userEnv, RunSink sink) {
-		Started started = launch(threadId, systemPrompt, callerId, message, workspace, userEnv, sink);
+		begin(threadId, systemPrompt, callerId, message, workspace, userEnv, sink, "", List.of());
+	}
+
+	public void begin(String threadId, String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv, RunSink sink, String agentsMd, List<String> skills) {
+		Started started = launch(threadId, systemPrompt, callerId, message, workspace, userEnv, sink, agentsMd, skills);
 		Thread thread = new Thread(() -> await(started, sink), "helix-worker-run");
 		thread.setDaemon(true);
 		thread.start();
@@ -136,11 +142,11 @@ public class AgentKitRuntime {
 
 	private Started launch(String systemPrompt, String callerId, String message, Path workspace,
 			Map<String, String> userEnv) {
-		return launch(null, systemPrompt, callerId, message, workspace, userEnv, null);
+		return launch(null, systemPrompt, callerId, message, workspace, userEnv, null, "", List.of());
 	}
 
 	private Started launch(String requestedThread, String systemPrompt, String callerId, String message, Path workspace,
-			Map<String, String> userEnv, RunSink sink) {
+			Map<String, String> userEnv, RunSink sink, String agentsMd, List<String> skills) {
 		if (!properties.ready()) {
 			throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "AGENTKIT_MODEL 和 AGENTKIT_API_KEY 还没配。");
 		}
@@ -162,7 +168,7 @@ public class AgentKitRuntime {
 		try {
 			execution.submit(caller, new Task(
 					threadId, taskId, prompt,
-					null, null, null, null, null, null,
+					null, null, null, enabled(skills), null, agentsMd == null ? "" : agentsMd,
 					properties.turns(), null, null, opening));
 			watch(execution, caller, threadId, done, sink);
 			return new Started(threadId, done, execution);
@@ -170,6 +176,24 @@ public class AgentKitRuntime {
 		catch (ExecutionRejectedException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage());
 		}
+	}
+
+	private static List<String> enabled(List<String> skills) {
+		if (skills == null || skills.isEmpty()) {
+			return List.of("helix-none");
+		}
+		List<String> names = new ArrayList<>();
+		for (String skill : skills) {
+			if (skill == null) {
+				continue;
+			}
+			String name = skill.strip();
+			if (name.isEmpty() || names.contains(name)) {
+				continue;
+			}
+			names.add(name);
+		}
+		return names.isEmpty() ? List.of("helix-none") : List.copyOf(names);
 	}
 
 	public static Path resolveWorkspace(Path root, String requested) {
