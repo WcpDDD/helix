@@ -27,8 +27,7 @@ public final class IssueWorkspace {
 			throw new WorkspaceException("issue 工作区不能离开 worker 目录。");
 		}
 		if (Files.exists(space.resolve(".git"))) {
-			writeGuide(space, issueNumber, environment);
-			linkSkills(space);
+			refreshSkills(source(base, environment), space);
 			return space;
 		}
 		if (Files.exists(space)) {
@@ -65,8 +64,7 @@ public final class IssueWorkspace {
 		else {
 			git(source, null, "worktree", "add", "-b", branch, space.toString(), "HEAD");
 		}
-		writeGuide(space, issueNumber, environment);
-		linkSkills(space);
+		refreshSkills(source, space);
 		return space;
 	}
 
@@ -83,6 +81,29 @@ public final class IssueWorkspace {
 			}
 		}
 		return names.isEmpty() ? List.of(NO_SKILL) : List.copyOf(names);
+	}
+
+	private static void refreshSkills(Path source, Path workspace) {
+		copySkills(source, workspace);
+		linkSkills(workspace);
+	}
+
+	private static void copySkills(Path source, Path workspace) {
+		Path from = source.resolve("skills");
+		if (!Files.isDirectory(from)) {
+			return;
+		}
+		Path to = workspace.resolve("skills");
+		try (Stream<Path> walk = Files.walk(from)) {
+			for (Path file : walk.filter(Files::isRegularFile).toList()) {
+				Path target = to.resolve(from.relativize(file));
+				Files.createDirectories(target.getParent());
+				Files.copy(file, target, java.nio.file.StandardCopyOption.REPLACE_EXISTING);
+			}
+		}
+		catch (IOException exception) {
+			// 当前技能没拷进工作区。这一轮仍用检出里已有的。
+		}
 	}
 
 	private static void linkSkills(Path workspace) {
@@ -176,32 +197,6 @@ public final class IssueWorkspace {
 			return value.indexOf('\n') >= 0 || value.indexOf('\r') >= 0 ? "" : value;
 		}
 		return "";
-	}
-
-	private static void writeGuide(Path space, int issueNumber, Map<String, String> environment) {
-		String markdown = WorkerGuide.markdown(issueNumber, value(environment, "HELIX_SERVER"), value(environment, "HELIX_WORKER_ID"));
-		try {
-			Files.writeString(space.resolve("agents.md"), markdown, StandardCharsets.UTF_8);
-		}
-		catch (IOException exception) {
-			throw new WorkspaceException("调度说明没有写进工作区。");
-		}
-		String relative = gitText(space, "rev-parse", "--git-path", "info/exclude").strip();
-		if (relative.isBlank()) {
-			return;
-		}
-		Path exclude = relative.startsWith("/") ? Path.of(relative) : space.resolve(relative);
-		try {
-			Files.createDirectories(exclude.getParent());
-			String current = Files.exists(exclude) ? Files.readString(exclude, StandardCharsets.UTF_8) : "";
-			if (current.lines().map(String::strip).noneMatch("agents.md"::equals)) {
-				String next = current.isEmpty() || current.endsWith("\n") ? current + "agents.md\n" : current + "\nagents.md\n";
-				Files.writeString(exclude, next, StandardCharsets.UTF_8);
-			}
-		}
-		catch (IOException exception) {
-			// 说明已经写好。进不了排除名单时，仍留在工作区里。
-		}
 	}
 
 	public static Map<String, String> gitlab(Map<String, String> environment) {

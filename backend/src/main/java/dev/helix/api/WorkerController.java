@@ -8,6 +8,7 @@ import tools.jackson.databind.json.JsonMapper;
 
 import dev.helix.board.CurrentProject;
 import dev.helix.worker.AgentSessionService;
+import dev.helix.worker.WorkerIssueRead;
 import dev.helix.worker.SubtaskScheduler;
 import dev.helix.worker.SubtaskScheduler.AgentSessionView;
 import dev.helix.worker.SubtaskScheduler.Dispatch;
@@ -42,12 +43,15 @@ public class WorkerController {
 
 	private final CurrentProject currentProject;
 
+	private final WorkerIssueRead issueRead;
+
 	public WorkerController(WorkerRegistry registry, SubtaskScheduler scheduler, AgentSessionService agentSessions,
-			CurrentProject currentProject) {
+			CurrentProject currentProject, WorkerIssueRead issueRead) {
 		this.registry = registry;
 		this.scheduler = scheduler;
 		this.agentSessions = agentSessions;
 		this.currentProject = currentProject;
+		this.issueRead = issueRead;
 	}
 
 	@GetMapping("/issues/{number}/agent-session")
@@ -214,6 +218,38 @@ public class WorkerController {
 			response.setContentType("application/json");
 			String detail = exception.getReason() == null ? "对话没有读到。" : exception.getReason();
 			response.getWriter().write("{\"detail\":\"" + detail.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}");
+		}
+	}
+
+	@PostMapping("/workers/{id}/issues/{number}/hitl")
+	public ResponseEntity<?> hitl(@PathVariable String id, @PathVariable int number) {
+		try {
+			issueRead.hitl(id, number);
+			return ResponseEntity.ok(Map.of("added", "ai/hitl"));
+		}
+		catch (ResponseStatusException exception) {
+			return failure(exception);
+		}
+	}
+
+	@PostMapping("/workers/{id}/issues/{number}/unmanage")
+	public ResponseEntity<?> unmanage(@PathVariable String id, @PathVariable int number) {
+		try {
+			issueRead.unmanage(id, number);
+			return ResponseEntity.ok(Map.of("removed", "ai/managed"));
+		}
+		catch (ResponseStatusException exception) {
+			return failure(exception);
+		}
+	}
+
+	@GetMapping("/workers/{id}/issues/{number}")
+	public ResponseEntity<?> issue(@PathVariable String id, @PathVariable int number) {
+		try {
+			return json(issueRead.read(id, number));
+		}
+		catch (ResponseStatusException exception) {
+			return failure(exception);
 		}
 	}
 

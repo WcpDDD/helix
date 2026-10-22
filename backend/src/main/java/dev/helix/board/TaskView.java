@@ -9,6 +9,7 @@ public record TaskView(
 		String owner,
 		String status,
 		String stage,
+		boolean hitl,
 		LocalDate startedAt,
 		LocalDate expectedEndAt,
 		LocalDate finishedAt,

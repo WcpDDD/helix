@@ -15,9 +15,12 @@ public class GitlabSessionToken {
 
 	private final GitlabSessionCredential credential;
 
-	public GitlabSessionToken(GitlabOAuthClient oauth, GitlabSessionCredential credential) {
+	private final LoginStore logins;
+
+	public GitlabSessionToken(GitlabOAuthClient oauth, GitlabSessionCredential credential, LoginStore logins) {
 		this.oauth = oauth;
 		this.credential = credential;
+		this.logins = logins;
 	}
 
 	public String require(HttpSession session) {
@@ -48,6 +51,10 @@ public class GitlabSessionToken {
 		session.setAttribute(AuthController.SESSION_REFRESH, login.refreshToken());
 		if (login.expiresAt() > 0) {
 			session.setAttribute(AuthController.SESSION_EXPIRES, login.expiresAt());
+		}
+		Object loginId = session.getAttribute(AuthController.SESSION_LOGIN);
+		if (loginId instanceof String id && !id.isBlank()) {
+			logins.updateTokens(id, login.accessToken(), login.refreshToken(), login.expiresAt());
 		}
 		credential.remember(login.accessToken());
 		return login.accessToken();

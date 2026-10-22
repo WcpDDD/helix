@@ -9,6 +9,7 @@ import org.springframework.web.client.RestClient;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -17,6 +18,38 @@ import static org.springframework.test.web.client.response.MockRestResponseCreat
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withUnauthorizedRequest;
 
 class GitlabIssueClientTest {
+
+	@Test
+	void addLabelAsksGitlabToAttachThatLabel() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitlabIssueClient client = new GitlabIssueClient(builder.build());
+		server.expect(requestTo(
+				"https://hackers.oalite.com/api/v4/projects/qingflow-develop%2Fqingflow-workspace/issues/21"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(header("Authorization", "Bearer tok"))
+				.andExpect(content().json("{\"add_labels\":\"ai/hitl\"}"))
+				.andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+		client.addLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 21, "ai/hitl");
+		server.verify();
+	}
+
+	@Test
+	void removeLabelAsksGitlabToDropThatLabel() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitlabIssueClient client = new GitlabIssueClient(builder.build());
+		server.expect(requestTo(
+				"https://hackers.oalite.com/api/v4/projects/qingflow-develop%2Fqingflow-workspace/issues/21"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(header("Authorization", "Bearer tok"))
+				.andExpect(content().json("{\"remove_labels\":\"ai/managed\"}"))
+				.andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+		client.removeLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 21, "ai/managed");
+		server.verify();
+	}
 
 	@Test
 	void readsTheDescriptionWithTheSessionToken() {
@@ -73,6 +106,31 @@ class GitlabIssueClientTest {
 	}
 
 	@Test
+	void listsOpenedIssuesAndKeepsTheirLabels() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitlabIssueClient client = new GitlabIssueClient(builder.build());
+		String issues = "https://hackers.oalite.com/api/v4/projects/qingflow-develop%2Fqingflow-workspace/issues?state=opened&per_page=100&page=";
+		server.expect(requestTo(issues + "1"))
+				.andExpect(method(HttpMethod.GET))
+				.andExpect(header("Authorization", "Bearer tok"))
+				.andRespond(withSuccess("""
+						[{"iid":21,"labels":["status/proposal","ai/managed"]},
+						{"iid":22,"labels":["type/bug"]}]
+						""", MediaType.APPLICATION_JSON).header("X-Next-Page", "2"));
+		server.expect(requestTo(issues + "2"))
+				.andRespond(withSuccess("""
+						[{"iid":23}]
+						""", MediaType.APPLICATION_JSON));
+
+		assertThat(client.opened("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace"))
+				.containsExactly(new GitlabIssueClient.OpenedIssue(21, java.util.List.of("status/proposal", "ai/managed")),
+						new GitlabIssueClient.OpenedIssue(22, java.util.List.of("type/bug")),
+						new GitlabIssueClient.OpenedIssue(23, java.util.List.of()));
+		server.verify();
+	}
+
+	@Test
 	void listsEveryIssueAndFollowsTheNextPage() {
 		RestClient.Builder builder = RestClient.builder();
 		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
@@ -92,8 +150,8 @@ class GitlabIssueClientTest {
 		assertThat(client.issues("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace"))
 				.containsExactly(
 						new GitlabIssueClient.IssueHead(21, "主任务", "<!-- helix -->\n状态：实现中\n<!-- /helix -->", "ada", "陈",
-								"opened"),
-						new GitlabIssueClient.IssueHead(36, "已关闭的", "", "bea", "", "closed"));
+								"opened", java.util.List.of()),
+						new GitlabIssueClient.IssueHead(36, "已关闭的", "", "bea", "", "closed", java.util.List.of()));
 		server.verify();
 	}
 

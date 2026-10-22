@@ -51,6 +51,11 @@ const router = createRouter({
       name: 'collab',
       component: () => import('../views/CollabView.vue'),
     },
+    {
+      path: '/schedule',
+      name: 'schedule',
+      component: () => import('../views/ScheduleView.vue'),
+    },
   ],
 })
 

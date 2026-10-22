@@ -6,7 +6,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record AgentKitProperties(String workspace, String model, String baseUrl, String apiKey, Integer maxTurns) {
 
 	public int turns() {
-		return maxTurns == null || maxTurns < 1 ? 20 : maxTurns;
+		// 0 表示不限制轮次。agent-kit 只在 maxTurns > 0 时截断。
+		return maxTurns == null || maxTurns < 1 ? 0 : maxTurns;
 	}
 
 	public boolean ready() {

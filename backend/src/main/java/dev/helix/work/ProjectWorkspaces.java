@@ -262,8 +262,7 @@ public class ProjectWorkspaces {
 		try {
 			String branch = branch(directory);
 			run(directory, token, "fetch", "--depth", "10", "origin", branch);
-			if (!dirty(directory) && count(directory, "@{upstream}..HEAD") == 0
-					&& count(directory, "HEAD..@{upstream}") > 0) {
+			if (count(directory, "@{upstream}..HEAD") == 0 && count(directory, "HEAD..@{upstream}") > 0) {
 				run(directory, null, "merge", "--ff-only", "@{upstream}");
 			}
 			synchronized (lock(key)) {

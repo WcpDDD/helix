@@ -29,7 +29,8 @@ public final class WorkerProcess {
 				null, setting("AGENTKIT_MODEL", ""), setting("AGENTKIT_BASE_URL", ""), setting("AGENTKIT_API_KEY", ""), null),
 				root.resolve("agent-sessions"));
 		WorkerSessions sessions = new WorkerSessions(root, System.getenv(), (thread, message, workspace, gitlab, sink, profile) -> runtime.begin(
-				thread, instructions(profile.body()), id, message, workspace, gitlab, sink, profile.body(), profile.skills()));
+				thread, instructions(profile.body(), issueOf(workspace), server, id), id, message, workspace, gitlab, sink,
+				"", profile.skills()));
 		HttpServer http = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
 		http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 		http.createContext("/", exchange -> WorkerGateway.handle(exchange, sessions));
@@ -44,16 +45,52 @@ public final class WorkerProcess {
 		}
 	}
 
-	static String instructions(String agentsMd) {
-		String base = """
+	static String instructions(String agentBody, int issueNumber, String server, String workerId) {
+		boolean lead = manager(agentBody);
+		String play = lead ? WorkerGuide.markdown(issueNumber, server, workerId) : WorkerGuide.worker(issueNumber, server, workerId);
+		String base = lead ? """
 				你在这张 issue 独享的工作区里。
-				工作区根目录的 agents.md 写了三件事：给这张 issue 上的某个 Agent 派任务，读取那个 Agent 的对话目录，以及按 seq 调阅一条完整对话。只使用那里写明的接口。
+				下面就是这一轮的打法。按「目标」和「调度其他 Agent」行事。
+				这次只是叫醒你。issue 自己去拉。不要列目录，也不要到工作区文件里找这套打法。
 				这次只启用了任务列出的 skill。没列进去的 skill 不要用。
+				已经安装的外部资产列在 installed 里，按那里写下的路径使用。
+				""" : """
+				你在这张 issue 独享的工作区里。
+				下面就是这一轮的打法。按「工作方式」行事。
+				不要调度其他角色，也不要改 issue 阶段。
+				不要到工作区文件里找这套打法。
+				这次只启用了任务列出的 skill。没列进去的 skill 不要用。
+				已经安装的外部资产列在 installed 里，按那里写下的路径使用。
 				""";
-		if (agentsMd == null || agentsMd.isBlank()) {
-			return base;
+		String body = agentBody == null || agentBody.isBlank() ? "" : "\n# 这个 Agent 的定义\n\n按这份定义行事。\n\n" + agentBody.strip() + "\n";
+		return base + "\n" + play + body;
+	}
+
+	private static int issueOf(Path workspace) {
+		String name = workspace == null || workspace.getFileName() == null ? "" : workspace.getFileName().toString();
+		if (!name.startsWith("issue-")) {
+			return 0;
 		}
-		return base + "\n# 这个 Agent 的定义\n\n按这份定义行事。\n\n" + agentsMd.strip() + "\n";
+		try {
+			return Integer.parseInt(name.substring("issue-".length()));
+		}
+		catch (NumberFormatException exception) {
+			return 0;
+		}
+	}
+
+	private static boolean manager(String agentsMd) {
+		if (agentsMd == null) {
+			return false;
+		}
+		for (String line : agentsMd.strip().split("\n")) {
+			String stripped = line.strip();
+			if (stripped.isEmpty()) {
+				continue;
+			}
+			return stripped.equals("# manager") || stripped.startsWith("# manager ");
+		}
+		return false;
 	}
 
 	private static void beat(HttpClient client, String server, String id, String name, String address) {

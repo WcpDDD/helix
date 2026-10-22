@@ -47,10 +47,7 @@ class WorkerSessionsTest {
 		assertThat(first).isEqualTo(root.resolve("issue-21"));
 		assertThat(second).isEqualTo(root.resolve("issue-22"));
 		assertThat(Files.readString(first.resolve("README.md"))).isEqualTo("hello");
-		assertThat(Files.readString(first.resolve("agents.md"))).contains("#21").contains("/agents/{agent}/tasks")
-				.contains("/agents/{agent}/conversations")
-				.contains("/agents/{agent}/conversations/{seq}");
-		assertThat(gitText(first, "status", "--short")).doesNotContain("agents.md");
+		assertThat(first.resolve("agents.md")).doesNotExist();
 		assertThat(IssueWorkspace.open(root, 21, env)).isEqualTo(first);
 		assertThatThrownBy(() -> IssueWorkspace.open(root, 23, Map.of()))
 				.isInstanceOf(WorkspaceException.class)
@@ -172,8 +169,28 @@ class WorkerSessionsTest {
 		assertThat(space.resolve(".agents/skills/plain")).doesNotExist();
 		assertThat(IssueWorkspace.enabledSkills(space, java.util.List.of())).containsExactly(IssueWorkspace.NO_SKILL);
 		assertThat(IssueWorkspace.open(temp.resolve("workers"), 21, Map.of("HELIX_REPO", repo.toString()))).isEqualTo(space);
-		assertThat(WorkerProcess.instructions("你是 arch。")).contains("你是 arch。").contains("agents.md");
-		assertThat(WorkerProcess.instructions("  ")).doesNotContain("这个 Agent 的定义");
+		assertThat(WorkerProcess.instructions("你是 arch。", 21, "http://127.0.0.1:8080", "worker-local"))
+				.contains("你是 arch。").contains("工作方式").contains("issues/21")
+				.doesNotContain("你是这张 issue 的 manager").doesNotContain("调度其他 Agent")
+				.doesNotContain("/issues/21/hitl").doesNotContain("/unmanage").doesNotContain("/tasks");
+		assertThat(WorkerProcess.instructions("# proposal\n你写提案。", 21, "http://127.0.0.1:8080", "worker-local"))
+				.contains("工作方式").doesNotContain("你是这张 issue 的 manager")
+				.doesNotContain("/issues/21/hitl").doesNotContain("/tasks");
+		assertThat(WorkerProcess.instructions("# manager\n你维护这张 issue。", 21, "http://127.0.0.1:8080", "worker-local"))
+				.contains("目标").contains("调度其他 Agent").contains("叫醒")
+				.contains("交给人确认时，打上 ai/hitl，并摘掉 ai/managed")
+				.doesNotContain("agents.md 里").doesNotContain("# 工作方式");
+		assertThat(WorkerGuide.markdown(21, "http://127.0.0.1:8080", "worker-local")).contains("做到测试通过").contains("一轮只派一个")
+				.contains("自己拉取这张 issue").contains("摘掉 ai/managed")
+				.contains("交给人确认时，打上 ai/hitl，并摘掉 ai/managed").contains("交给人确认：打上 ai/hitl，摘掉 ai/managed")
+				.contains("POST http://127.0.0.1:8080/api/workers/worker-local/issues/21/hitl")
+				.contains("POST http://127.0.0.1:8080/api/workers/worker-local/issues/21/unmanage")
+				.contains("/api/workers/worker-local/issues/21/agents/{agent}/tasks")
+				.doesNotContain("# 工作方式");
+		assertThat(WorkerGuide.worker(21, "http://127.0.0.1:8080", "worker-local")).contains("无法自决时立刻停")
+				.contains("GET http://127.0.0.1:8080/api/workers/worker-local/issues/21")
+				.doesNotContain("调度其他 Agent").doesNotContain("/issues/21/hitl").doesNotContain("/tasks");
+		assertThat(WorkerProcess.instructions("  ", 21, "http://127.0.0.1:8080", "worker-local")).doesNotContain("这个 Agent 的定义");
 	}
 
 	@Test

@@ -34,10 +34,20 @@ class TaskBoardArrangeTest {
 		TaskView detached = find(tasks, "36");
 		assertThat(detached.status()).isEqualTo("已关闭");
 		assertThat(detached.issues()).isEmpty();
+		assertThat(practice.hitl()).isFalse();
+	}
+
+	@Test
+	void aHumanTodoIsMarkedOnTheTask() {
+		ProjectEntity project = new ProjectEntity("qingflow", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace");
+		List<TaskView> tasks = TaskBoardService.arrange(project, BoardFile.empty(), List.of(
+				new GitlabIssueClient.IssueHead(21, "待人", "", "ada", "", "opened", List.of("ai/managed", "ai/hitl"))));
+
+		assertThat(find(tasks, "21").hitl()).isTrue();
 	}
 
 	private static GitlabIssueClient.IssueHead head(int iid, String title, String description, String state) {
-		return new GitlabIssueClient.IssueHead(iid, title, description, "ada", "", state);
+		return new GitlabIssueClient.IssueHead(iid, title, description, "ada", "", state, List.of());
 	}
 
 	private static TaskView find(List<TaskView> tasks, String code) {

@@ -14,7 +14,10 @@ import com.fasterxml.jackson.annotation.JsonProperty;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import org.springframework.core.io.ByteArrayResource;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.client.MultipartBodyBuilder;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
@@ -39,6 +42,92 @@ public class GitlabIssueClient {
 					.retrieve()
 					.body(Payload.class);
 			return payload == null || payload.description() == null ? "" : payload.description();
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
+	public CreatedIssue createIssue(String accessToken, String gitHost, String owner, String repo, String title,
+			String description, List<String> labels) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		List<String> names = labels == null ? List.of() : labels;
+		try {
+			return postIssue(accessToken, origin, project, title, description, names);
+		}
+		catch (GitlabIssueException exception) {
+			if (exception.status() != 400) {
+				throw exception;
+			}
+		}
+		for (String label : names) {
+			ensureLabel(accessToken, origin, project, label);
+		}
+		return postIssue(accessToken, origin, project, title, description, names);
+	}
+
+	public UploadedFile upload(String accessToken, String gitHost, String owner, String repo, String filename,
+			byte[] content) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		MultipartBodyBuilder form = new MultipartBodyBuilder();
+		form.part("file", new ByteArrayResource(content) {
+			@Override
+			public String getFilename() {
+				return filename;
+			}
+		}, MediaType.APPLICATION_OCTET_STREAM);
+		try {
+			UploadPayload payload = http.post()
+					.uri(URI.create(origin + "/api/v4/projects/" + project + "/uploads"))
+					.header("Authorization", "Bearer " + accessToken)
+					.contentType(MediaType.MULTIPART_FORM_DATA)
+					.body(form.build())
+					.retrieve()
+					.body(UploadPayload.class);
+			if (payload == null || payload.markdown() == null || payload.markdown().isBlank()) {
+				throw new GitlabIssueException(502);
+			}
+			String name = payload.alt() == null || payload.alt().isBlank() ? filename : payload.alt();
+			return new UploadedFile(name, payload.markdown().strip());
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
+	public void addLabel(String accessToken, String gitHost, String owner, String repo, int iid, String label) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		try {
+			putLabel(accessToken, origin, project, iid, "add_labels", label);
+		}
+		catch (GitlabIssueException exception) {
+			if (exception.status() != 400) {
+				throw exception;
+			}
+			ensureLabel(accessToken, origin, project, label);
+			putLabel(accessToken, origin, project, iid, "add_labels", label);
+		}
+	}
+
+	public void removeLabel(String accessToken, String gitHost, String owner, String repo, int iid, String label) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		putLabel(accessToken, origin, project, iid, "remove_labels", label);
+	}
+
+	private void putLabel(String accessToken, String origin, String project, int iid, String field, String label) {
+		Map<String, String> body = new LinkedHashMap<>();
+		body.put(field, label);
+		try {
+			http.put()
+					.uri(URI.create(origin + "/api/v4/projects/" + project + "/issues/" + iid))
+					.header("Authorization", "Bearer " + accessToken)
+					.body(body)
+					.retrieve()
+					.toBodilessEntity();
 		}
 		catch (RestClientException exception) {
 			throw failed(exception);
@@ -94,6 +183,39 @@ public class GitlabIssueClient {
 						found.put(issue.iid(), head(issue));
 					}
 				}
+			}
+			return found;
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
+	public List<OpenedIssue> opened(String accessToken, String gitHost, String owner, String repo) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		List<OpenedIssue> found = new ArrayList<>();
+		int page = 1;
+		try {
+			for (int guard = 0; guard < 50; guard++) {
+				ResponseEntity<OpenedPayload[]> response = http.get()
+						.uri(URI.create(origin + "/api/v4/projects/" + project
+								+ "/issues?state=opened&per_page=100&page=" + page))
+						.header("Authorization", "Bearer " + accessToken)
+						.retrieve()
+						.toEntity(OpenedPayload[].class);
+				OpenedPayload[] batch = response.getBody();
+				if (batch != null) {
+					for (OpenedPayload issue : batch) {
+						List<String> labels = issue.labels() == null ? List.of() : List.copyOf(issue.labels());
+						found.add(new OpenedIssue(issue.iid(), labels));
+					}
+				}
+				String next = response.getHeaders().getFirst("X-Next-Page");
+				if (next == null || next.isBlank() || batch == null || batch.length == 0) {
+					break;
+				}
+				page = Integer.parseInt(next);
 			}
 			return found;
 		}
@@ -216,10 +338,58 @@ public class GitlabIssueClient {
 		}
 	}
 
+	private CreatedIssue postIssue(String accessToken, String origin, String project, String title, String description,
+			List<String> labels) {
+		Map<String, String> body = new LinkedHashMap<>();
+		body.put("title", title);
+		body.put("description", description);
+		body.put("labels", String.join(",", labels));
+		try {
+			CreatedPayload payload = http.post()
+					.uri(URI.create(origin + "/api/v4/projects/" + project + "/issues"))
+					.header("Authorization", "Bearer " + accessToken)
+					.body(body)
+					.retrieve()
+					.body(CreatedPayload.class);
+			if (payload == null || payload.iid() <= 0) {
+				throw new GitlabIssueException(502);
+			}
+			return new CreatedIssue(payload.iid(), payload.webUrl() == null ? "" : payload.webUrl());
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
+	private void ensureLabel(String accessToken, String origin, String project, String name) {
+		Map<String, String> body = new LinkedHashMap<>();
+		body.put("name", name);
+		body.put("color", "#6B4EFF");
+		try {
+			http.post()
+					.uri(URI.create(origin + "/api/v4/projects/" + project + "/labels"))
+					.header("Authorization", "Bearer " + accessToken)
+					.body(body)
+					.retrieve()
+					.toBodilessEntity();
+		}
+		catch (RestClientResponseException exception) {
+			int status = exception.getStatusCode().value();
+			if (status == 400 || status == 409) {
+				return;
+			}
+			throw failed(exception);
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
 	private static IssueHead head(HeadPayload issue) {
+		List<String> labels = issue.labels() == null ? List.of() : List.copyOf(issue.labels());
 		return new IssueHead(issue.iid(), text(issue.title()),
 				issue.description() == null ? "" : issue.description(), person(issue.author()),
-				person(first(issue.assignees())), text(issue.state()));
+				person(first(issue.assignees())), text(issue.state()), labels);
 	}
 
 	private static GitlabIssueException failed(RestClientException exception) {
@@ -274,10 +444,32 @@ public class GitlabIssueClient {
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
 	private record HeadPayload(int iid, String title, String description, String state, Author author,
-			Author[] assignees) {
+			Author[] assignees, List<String> labels) {
 	}
 
-	public record IssueHead(int iid, String title, String description, String author, String assignee, String state) {
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	private record OpenedPayload(int iid, List<String> labels) {
+	}
+
+	public record IssueHead(int iid, String title, String description, String author, String assignee, String state,
+			List<String> labels) {
+	}
+
+	public record OpenedIssue(int iid, List<String> labels) {
+	}
+
+	public record CreatedIssue(int iid, String webUrl) {
+	}
+
+	public record UploadedFile(String name, String markdown) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	private record CreatedPayload(int iid, @JsonProperty("web_url") String webUrl) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	private record UploadPayload(String alt, String markdown) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

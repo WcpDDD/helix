@@ -14,16 +14,16 @@ class SkillIndexTest {
 		List<SkillIndex.SkillView> skills = SkillIndex.fromPaths(List.of(
 				"skills/dev-flow/references/state-machine.md",
 				"skills/dev-flow/SKILL.md",
-				"skills/superpowers/brainstorming/SKILL.md",
-				"skills/superpowers/brainstorming/visual-companion.md",
-				"skills/superpowers/brainstorming/scripts/helper.py"));
+				"skills/shared/writing/SKILL.md",
+				"skills/shared/writing/visual-companion.md",
+				"skills/shared/writing/scripts/helper.py"));
 
 		assertThat(skills).extracting(SkillIndex.SkillView::name).containsExactly("dev-flow",
-				"superpowers/brainstorming");
+				"shared/writing");
 		assertThat(skills.get(0).files()).containsExactly("skills/dev-flow/SKILL.md",
 				"skills/dev-flow/references/state-machine.md");
-		assertThat(skills.get(1).files()).containsExactly("skills/superpowers/brainstorming/SKILL.md",
-				"skills/superpowers/brainstorming/visual-companion.md");
+		assertThat(skills.get(1).files()).containsExactly("skills/shared/writing/SKILL.md",
+				"skills/shared/writing/visual-companion.md");
 	}
 
 	@Test

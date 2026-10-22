@@ -100,6 +100,7 @@ onUnmounted(() => {
         <RouterLink to="/members">成员</RouterLink>
         <RouterLink to="/agents">Agent</RouterLink>
         <RouterLink to="/workers">Worker</RouterLink>
+        <RouterLink to="/schedule">调度</RouterLink>
         <RouterLink to="/collab">协同</RouterLink>
       </nav>
       <div v-if="session.user" class="bar-end">

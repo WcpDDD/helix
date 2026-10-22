@@ -16,7 +16,8 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
-import io.agentkit.api.AgentRunningContext;
+import io.agentkit.api.IdentityContext;
+import io.agentkit.api.execution.AgentRunningContext;
 import io.agentkit.api.session.SessionStorage;
 import io.agentkit.api.store.Store;
 import io.agentkit.execution.session.DefaultSessionStorage;
@@ -150,7 +151,7 @@ final class SessionMemory {
 		private final ConcurrentHashMap<String, byte[]> files = new ConcurrentHashMap<>();
 
 		@Override
-		public void put(AgentRunningContext context, String key, InputStream body) {
+		public void put(IdentityContext context, String key, InputStream body) {
 			try {
 				files.put(key, body.readAllBytes());
 			}
@@ -160,7 +161,7 @@ final class SessionMemory {
 		}
 
 		@Override
-		public Optional<InputStream> get(AgentRunningContext context, String key) {
+		public Optional<InputStream> get(IdentityContext context, String key) {
 			byte[] body = files.get(key);
 			if (body == null) {
 				return Optional.empty();
@@ -169,13 +170,14 @@ final class SessionMemory {
 		}
 
 		@Override
-		public void delete(AgentRunningContext context, String key) {
+		public void delete(IdentityContext context, String key) {
 			files.remove(key);
 		}
 
 		@Override
-		public List<String> list(AgentRunningContext context, String prefix) {
-			return List.of();
+		public List<String> list(IdentityContext context, String prefix) {
+			String start = prefix == null ? "" : prefix;
+			return files.keySet().stream().filter(key -> key.startsWith(start)).toList();
 		}
 
 		@Override
@@ -192,7 +194,7 @@ final class SessionMemory {
 		}
 
 		@Override
-		public void put(AgentRunningContext context, String key, InputStream body) {
+		public void put(IdentityContext context, String key, InputStream body) {
 			try {
 				byte[] bytes = body.readAllBytes();
 				Path file = file(key);
@@ -207,7 +209,7 @@ final class SessionMemory {
 		}
 
 		@Override
-		public Optional<InputStream> get(AgentRunningContext context, String key) {
+		public Optional<InputStream> get(IdentityContext context, String key) {
 			Path file = file(key);
 			if (!Files.isRegularFile(file)) {
 				return Optional.empty();
@@ -221,7 +223,7 @@ final class SessionMemory {
 		}
 
 		@Override
-		public void delete(AgentRunningContext context, String key) {
+		public void delete(IdentityContext context, String key) {
 			try {
 				Files.deleteIfExists(file(key));
 			}
@@ -231,7 +233,7 @@ final class SessionMemory {
 		}
 
 		@Override
-		public List<String> list(AgentRunningContext context, String prefix) {
+		public List<String> list(IdentityContext context, String prefix) {
 			return List.of();
 		}
 

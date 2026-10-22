@@ -5,6 +5,7 @@ import java.util.List;
 import dev.helix.auth.AuthController;
 import dev.helix.board.CurrentProject;
 import dev.helix.board.IssueBodyService;
+import dev.helix.board.ProjectEntity;
 import dev.helix.gitlab.GitlabComment;
 
 import org.springframework.http.HttpStatus;
@@ -31,14 +32,14 @@ public class IssueBodyController {
 
 	@GetMapping("/{number}/body")
 	public IssueBody body(@PathVariable int number, HttpSession session) {
-		long projectId = currentProject.resolve(session).getId();
-		return new IssueBody(issueBodyService.body(projectId, number, token(session)));
+		ProjectEntity project = currentProject.resolve(session);
+		return new IssueBody(issueBodyService.body(project, number, token(session)));
 	}
 
 	@GetMapping("/{number}/notes")
 	public IssueNotes notes(@PathVariable int number, HttpSession session) {
-		long projectId = currentProject.resolve(session).getId();
-		List<IssueNotes.Note> notes = issueBodyService.comments(projectId, number, token(session)).stream()
+		ProjectEntity project = currentProject.resolve(session);
+		List<IssueNotes.Note> notes = issueBodyService.comments(project, number, token(session)).stream()
 				.map(IssueBodyController::note)
 				.toList();
 		return new IssueNotes(notes);

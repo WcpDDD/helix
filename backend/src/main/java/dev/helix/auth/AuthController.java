@@ -38,6 +38,8 @@ public class AuthController {
 
 	public static final String SESSION_EXPIRES = "helix.gitlab.expiresAt";
 
+	public static final String SESSION_LOGIN = "helix.login";
+
 	private static final Logger log = LoggerFactory.getLogger(AuthController.class);
 
 	private final HelixProperties properties;
@@ -46,15 +48,18 @@ public class AuthController {
 
 	private final GitlabSessionCredential credential;
 
+	private final LoginStore logins;
+
 	private final WorkspaceBoard boards;
 
 	private final SecureRandom random = new SecureRandom();
 
 	public AuthController(HelixProperties properties, GitlabOAuthClient gitlab, GitlabSessionCredential credential,
-			WorkspaceBoard boards) {
+			LoginStore logins, WorkspaceBoard boards) {
 		this.properties = properties;
 		this.gitlab = gitlab;
 		this.credential = credential;
+		this.logins = logins;
 		this.boards = boards;
 	}
 
@@ -84,7 +89,9 @@ public class AuthController {
 		}
 		try {
 			GitlabLogin login = gitlab.exchange(code);
+			String loginId = logins.save(login);
 			HttpSession signedIn = request.getSession(true);
+			signedIn.setAttribute(SESSION_LOGIN, loginId);
 			signedIn.setAttribute(SESSION_USER, login.user());
 			signedIn.setAttribute(SESSION_TOKEN, login.accessToken());
 			if (login.refreshToken() != null && !login.refreshToken().isBlank()) {
@@ -94,6 +101,7 @@ public class AuthController {
 				signedIn.setAttribute(SESSION_EXPIRES, login.expiresAt());
 			}
 			credential.remember(login.accessToken());
+			LoginCookie.write(response, loginId);
 			try {
 				boards.refresh(login.accessToken());
 			}
@@ -121,6 +129,14 @@ public class AuthController {
 	@PostMapping("/logout")
 	public void logout(HttpServletRequest request, HttpServletResponse response) {
 		HttpSession session = request.getSession(false);
+		String loginId = session == null ? null : text(session.getAttribute(SESSION_LOGIN));
+		if (loginId == null) {
+			loginId = LoginCookie.read(request);
+		}
+		if (loginId != null) {
+			logins.delete(loginId);
+		}
+		LoginCookie.clear(response);
 		if (session != null) {
 			Object token = session.getAttribute(SESSION_TOKEN);
 			session.invalidate();
@@ -129,6 +145,13 @@ public class AuthController {
 			}
 		}
 		response.setStatus(HttpStatus.NO_CONTENT.value());
+	}
+
+	private static String text(Object value) {
+		if (!(value instanceof String text) || text.isBlank()) {
+			return null;
+		}
+		return text;
 	}
 
 	private String frontend(String pathAndQuery) {

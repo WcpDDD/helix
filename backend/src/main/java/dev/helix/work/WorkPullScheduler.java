@@ -14,6 +14,7 @@ import dev.helix.board.ProjectEntity;
 import dev.helix.board.ProjectRepository;
 import dev.helix.config.HelixProperties;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -25,6 +26,8 @@ public class WorkPullScheduler {
 	static final ZoneId ZONE = ZoneId.of("Asia/Shanghai");
 
 	private static final String DEFAULT_TIMES = "09:00,13:00,18:00";
+
+	static final int FOLLOW_SECONDS = 60;
 
 	private final ProjectWorkspaces workspaces;
 
@@ -38,8 +41,16 @@ public class WorkPullScheduler {
 
 	private LocalDateTime fired;
 
+	private LocalDateTime followed;
+
+	@Autowired
 	public WorkPullScheduler(ProjectWorkspaces workspaces, ProjectRepository projects, GitlabSessionCredential credential,
 			HelixProperties properties) {
+		this(workspaces, projects, credential, properties, true);
+	}
+
+	WorkPullScheduler(ProjectWorkspaces workspaces, ProjectRepository projects, GitlabSessionCredential credential,
+			HelixProperties properties, boolean schedule) {
 		this.workspaces = workspaces;
 		this.projects = projects;
 		this.credential = credential;
@@ -50,11 +61,15 @@ public class WorkPullScheduler {
 			thread.setDaemon(true);
 			return thread;
 		});
-		executor.scheduleWithFixedDelay(this::tick, 20, 20, TimeUnit.SECONDS);
+		if (schedule) {
+			executor.scheduleWithFixedDelay(this::tick, 20, 20, TimeUnit.SECONDS);
+		}
 	}
 
 	void tick() {
-		fire(LocalDateTime.now(ZONE));
+		LocalDateTime now = LocalDateTime.now(ZONE);
+		fire(now);
+		follow(now);
 	}
 
 	void fire(LocalDateTime now) {
@@ -67,6 +82,22 @@ public class WorkPullScheduler {
 			return;
 		}
 		fired = mark;
+		pullOpened(token);
+	}
+
+	void follow(LocalDateTime now) {
+		if (followed != null && now.isBefore(followed.plusSeconds(FOLLOW_SECONDS))) {
+			return;
+		}
+		String token = credential.current();
+		if (token == null || token.isBlank()) {
+			return;
+		}
+		followed = now;
+		pullOpened(token);
+	}
+
+	private void pullOpened(String token) {
 		for (ProjectEntity project : projects.findAll()) {
 			if (workspaces.opened(project) == null) {
 				continue;
@@ -75,7 +106,7 @@ public class WorkPullScheduler {
 				workspaces.requestPull(project, token);
 			}
 			catch (ResponseStatusException exception) {
-				// 这个目录正在拉取或推送，这一分钟跳过。
+				// 这个目录正在拉取或推送，这一轮跳过。
 			}
 		}
 	}

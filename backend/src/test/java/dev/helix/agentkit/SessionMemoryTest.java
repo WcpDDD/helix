@@ -4,7 +4,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
 
-import io.agentkit.api.AgentRunningContext;
+import io.agentkit.api.execution.AgentRunningContext;
 import io.agentkit.api.Principal;
 import io.agentkit.api.react.Checkpoint;
 import io.agentkit.api.session.SessionState;

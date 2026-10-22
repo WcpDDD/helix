@@ -1,5 +1,6 @@
 package dev.helix.agentkit;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
@@ -11,8 +12,6 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.Flow;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.regex.Pattern;
 
 import io.agentkit.api.execution.Caller;
@@ -23,6 +22,7 @@ import io.agentkit.api.execution.Task;
 import io.agentkit.api.execution.WorkspaceOpening;
 import io.agentkit.api.react.ReActConstructor;
 import io.agentkit.api.session.SessionStorage;
+import io.agentkit.execution.assembly.AssetInstalling;
 import io.agentkit.execution.env.local.LocalFsEnvProvider;
 import io.agentkit.execution.facade.ExecutionFacade;
 import io.agentkit.execution.meta.EnvPrimitiveTools;
@@ -39,15 +39,15 @@ import org.springframework.web.server.ResponseStatusException;
 
 public class AgentKitRuntime {
 
-	private static final Duration WAIT = Duration.ofMinutes(10);
-
 	private static final Pattern THREAD_ID = Pattern.compile("[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}");
 
 	private final AgentKitProperties properties;
 
 	private final SessionStorage memory;
 
-	private final Map<String, ExecutionFacade> sessions = new ConcurrentHashMap<>();
+	private final Map<String, Bound> sessions = new ConcurrentHashMap<>();
+
+	private volatile ExternalAssets assets;
 
 	public AgentKitRuntime(AgentKitProperties properties) {
 		this(properties, null);
@@ -66,11 +66,8 @@ public class AgentKitRuntime {
 			Map<String, String> userEnv) {
 		Started started = launch(systemPrompt, callerId, message, workspace, userEnv);
 		try {
-			ExecutionEvent.RunEnded ended = started.done().get(WAIT.toMillis(), TimeUnit.MILLISECONDS);
+			ExecutionEvent.RunEnded ended = started.done().get();
 			return new RunResult(started.threadId(), ended.phase().name(), ended.assistantText(), ended.failureMessage());
-		}
-		catch (TimeoutException exception) {
-			throw new ResponseStatusException(HttpStatus.GATEWAY_TIMEOUT, "这轮跑超时了。");
 		}
 		catch (InterruptedException exception) {
 			Thread.currentThread().interrupt();
@@ -109,17 +106,13 @@ public class AgentKitRuntime {
 
 	private void await(Started started, RunSink sink) {
 		try {
-			ExecutionEvent.RunEnded ended = started.done().get(WAIT.toMillis(), TimeUnit.MILLISECONDS);
+			ExecutionEvent.RunEnded ended = started.done().get();
 			System.out.println("任务结束 " + started.threadId() + " " + ended.phase());
 		}
 		catch (InterruptedException exception) {
 			Thread.currentThread().interrupt();
 			System.out.println("任务被打断 " + started.threadId());
 			close(sink, "failed", "这轮被打断了。");
-		}
-		catch (TimeoutException exception) {
-			System.out.println("任务超时 " + started.threadId());
-			close(sink, "failed", "这轮跑超时了。");
 		}
 		catch (ExecutionException exception) {
 			Throwable cause = exception.getCause() == null ? exception : exception.getCause();
@@ -160,18 +153,29 @@ public class AgentKitRuntime {
 				: UUID.randomUUID().toString();
 		String taskId = UUID.randomUUID().toString();
 		Caller caller = new Caller(callerId, null, null);
-		ExecutionFacade execution = facade(systemPrompt);
+		Bound bound = facade(systemPrompt);
+		String extra = agentsMd == null ? "" : agentsMd.strip();
+		if (!extra.isEmpty() && bound.prompt().contains(extra)) {
+			extra = "";
+		}
 		Map<String, String> env = userEnv == null ? Map.of() : Map.copyOf(userEnv);
 		WorkspaceOpening opening = new WorkspaceOpening(
-				"helix", root.toString(), false, env, Duration.ofSeconds(60), 256 * 1024, Map.of());
+				root.toString(), root.toString(), env, Duration.ofSeconds(60), 256 * 1024, Map.of());
 		CompletableFuture<ExecutionEvent.RunEnded> done = new CompletableFuture<>();
 		try {
-			execution.submit(caller, new Task(
+			bound.execution().prepare(caller, opening);
+			try {
+				bound.service().maintain();
+			}
+			catch (RuntimeException exception) {
+				throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "外部资产没有装上。", exception);
+			}
+			bound.execution().submit(caller, new Task(
 					threadId, taskId, prompt,
-					null, null, null, enabled(skills), null, agentsMd == null ? "" : agentsMd,
+					null, null, null, enabled(skills), null, extra,
 					properties.turns(), null, null, opening));
-			watch(execution, caller, threadId, done, sink);
-			return new Started(threadId, done, execution);
+			watch(bound.execution(), caller, threadId, done, sink);
+			return new Started(threadId, done, bound.execution());
 		}
 		catch (ExecutionRejectedException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage());
@@ -209,12 +213,12 @@ public class AgentKitRuntime {
 		return resolved;
 	}
 
-	private ExecutionFacade facade(String systemPrompt) {
-		String prompt = systemPrompt == null ? "" : systemPrompt;
+	private Bound facade(String systemPrompt) {
+		String prompt = systemPrompt == null || systemPrompt.isBlank() ? "你在工作区里。" : systemPrompt;
 		return sessions.computeIfAbsent(prompt, this::open);
 	}
 
-	private ExecutionFacade open(String systemPrompt) {
+	private Bound open(String systemPrompt) {
 		String baseUrl = properties.baseUrl() == null || properties.baseUrl().isBlank()
 				? "https://api.openai.com/v1"
 				: properties.baseUrl().strip();
@@ -224,9 +228,31 @@ public class AgentKitRuntime {
 				new TencentMaasBackend(llmConfig),
 				new OpenAICompatibleBackend(llmConfig)));
 		ReActConstructor constructor = new DefaultReActConstructor(llm, new EnvPrimitiveTools(), List.of());
-		return new ExecutionFacade(new DefaultSessionService(
-				memory, constructor, properties.model().strip(), systemPrompt, properties.turns(), null,
-				new LocalFsEnvProvider()));
+		DefaultSessionService service = new DefaultSessionService(
+				memory, constructor, properties.model().strip(), systemPrompt, properties.turns(),
+				new LocalFsEnvProvider(), assets().mounting(), new AssetInstalling());
+		return new Bound(systemPrompt, new ExecutionFacade(service), service);
+	}
+
+	private ExternalAssets assets() {
+		ExternalAssets current = assets;
+		if (current != null) {
+			return current;
+		}
+		synchronized (this) {
+			if (assets == null) {
+				try {
+					assets = ExternalAssets.open();
+				}
+				catch (IOException | RuntimeException exception) {
+					throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "外部资产目录打不开。", exception);
+				}
+			}
+			return assets;
+		}
+	}
+
+	private record Bound(String prompt, ExecutionFacade execution, DefaultSessionService service) {
 	}
 
 	private static void watch(ExecutionFacade execution, Caller caller, String threadId,

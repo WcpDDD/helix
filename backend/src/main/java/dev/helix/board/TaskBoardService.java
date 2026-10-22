@@ -76,6 +76,7 @@ public class TaskBoardService {
 					issue.getOwner().getDisplayName(),
 					task.getRollupStatus(),
 					task.getRollupStage(),
+					false,
 					task.getStartedOn(),
 					task.getExpectedEndOn(),
 					task.getFinishedOn(),
@@ -144,8 +145,8 @@ public class TaskBoardService {
 			String to = Integer.toString(edge.to());
 			edges.add(new TaskView.EdgeView(from + "-" + to, from, to, edge.needsContract(), edge.contractRef()));
 		}
-		return new TaskView(Integer.toString(number), titleOf(number, head), ownerOf(head), status, stage, null, null,
-				null, summaryFromHead(project, number, head), children, edges);
+		return new TaskView(Integer.toString(number), titleOf(number, head), ownerOf(head), status, stage, hitl(head), null,
+				null, null, summaryFromHead(project, number, head), children, edges);
 	}
 
 	private TaskView.IssueSummary summary(IssueEntity issue, Map<Long, List<TaskView.MergeRequestView>> requests,
@@ -200,6 +201,10 @@ public class TaskBoardService {
 			GitlabIssueClient.IssueHead head) {
 		return new TaskView.IssueSummary(issueUrl(project, number), "", authorOf(head), "", "", "", "", "", List.of(),
 				List.of());
+	}
+
+	private static boolean hitl(GitlabIssueClient.IssueHead head) {
+		return head != null && head.labels() != null && head.labels().contains(ProposalDraft.HITL);
 	}
 
 	private static String titleOf(int number, GitlabIssueClient.IssueHead head) {

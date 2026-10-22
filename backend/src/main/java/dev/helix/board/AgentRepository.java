@@ -11,6 +11,9 @@ public interface AgentRepository extends JpaRepository<AgentEntity, Long> {
 
 	List<AgentEntity> findByProject_IdOrderByNameAsc(Long projectId);
 
+	@Query("select distinct agent from AgentEntity agent left join fetch agent.skills where agent.project.id = :projectId")
+	List<AgentEntity> findWithSkills(@Param("projectId") Long projectId);
+
 	Optional<AgentEntity> findByIdAndProject_Id(Long id, Long projectId);
 
 	Optional<AgentEntity> findByProject_IdAndTag(Long projectId, String tag);

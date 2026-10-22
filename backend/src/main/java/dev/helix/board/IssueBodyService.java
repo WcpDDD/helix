@@ -9,40 +9,26 @@ import dev.helix.gitlab.IssueBodyText;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 @Service
 public class IssueBodyService {
 
-	private final IssueRepository issues;
-
 	private final GitlabIssueClient gitlab;
 
-	public IssueBodyService(IssueRepository issues, GitlabIssueClient gitlab) {
-		this.issues = issues;
+	public IssueBodyService(GitlabIssueClient gitlab) {
 		this.gitlab = gitlab;
 	}
 
-	@Transactional(readOnly = true)
-	public String body(long projectId, int number, String accessToken) {
-		ProjectEntity project = project(projectId, number);
+	public String body(ProjectEntity project, int number, String accessToken) {
 		String description = read(() -> gitlab.description(accessToken, project.getGitHost(), project.getGitOwner(),
 				project.getGitRepo(), number));
 		return IssueBodyText.prose(description);
 	}
 
-	@Transactional(readOnly = true)
-	public List<GitlabComment> comments(long projectId, int number, String accessToken) {
-		ProjectEntity project = project(projectId, number);
+	public List<GitlabComment> comments(ProjectEntity project, int number, String accessToken) {
 		return read(() -> gitlab.comments(accessToken, project.getGitHost(), project.getGitOwner(),
 				project.getGitRepo(), number));
-	}
-
-	private ProjectEntity project(long projectId, int number) {
-		return issues.findInProject(projectId, number)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND))
-				.getProject();
 	}
 
 	private <T> T read(Reader<T> reader) {
@@ -52,6 +38,9 @@ public class IssueBodyService {
 		catch (GitlabIssueException exception) {
 			if (exception.status() == 401 || exception.status() == 403) {
 				throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
+			}
+			if (exception.status() == 404) {
+				throw new ResponseStatusException(HttpStatus.NOT_FOUND);
 			}
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY);
 		}

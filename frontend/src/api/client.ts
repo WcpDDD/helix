@@ -143,6 +143,44 @@ export async function saveProject(id: number, name: string, path: string): Promi
   return response.json() as Promise<Project>
 }
 
+export async function uploadTaskFile(file: File): Promise<{ name: string; markdown: string }> {
+  const body = new FormData()
+  body.append('file', file)
+  const response = await fetch('/api/tasks/uploads', { method: 'POST', body })
+  if (response.status === 401) {
+    throw new Error('需要重新登录。')
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    const detail = payload && typeof payload.detail === 'string' ? payload.detail : ''
+    throw new Error(detail || (response.status === 413 ? '附件太大。' : '附件没有传上去。'))
+  }
+  return response.json() as Promise<{ name: string; markdown: string }>
+}
+
+export async function createTask(body: {
+  title: string
+  kind: string
+  fields: Record<string, string>
+  attachments: string[]
+  delegate: boolean
+}): Promise<{ code: string; url: string }> {
+  const response = await fetch('/api/tasks', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  })
+  if (response.status === 401) {
+    throw new Error('需要重新登录。')
+  }
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    const detail = payload && typeof payload.detail === 'string' ? payload.detail : ''
+    throw new Error(detail || '任务没有建起来。')
+  }
+  return response.json() as Promise<{ code: string; url: string }>
+}
+
 export async function fetchTasks(): Promise<Task[]> {
   const response = await fetch('/api/tasks')
   if (response.status === 401) {
@@ -513,6 +551,51 @@ async function fetchIssueJson<T>(path: string): Promise<T> {
     throw error
   }
   return response.json() as Promise<T>
+}
+
+export interface ScheduleFile {
+  name: string
+  bytes: number
+  current: boolean
+}
+
+export interface ScheduleRecord {
+  at?: string
+  event?: string
+  project?: string
+  issue?: number
+  opened?: number
+  managed?: number
+  status?: number
+  phase?: string
+  action?: string
+  tag?: string
+  note?: string
+  skills?: string
+  reason?: string
+  text?: string
+}
+
+export async function fetchScheduleFiles(): Promise<ScheduleFile[]> {
+  const response = await fetch('/api/schedule/logs')
+  if (response.status === 401) {
+    throw new Error('需要重新登录。')
+  }
+  if (!response.ok) {
+    throw new Error('调度日志没有读到。')
+  }
+  return response.json() as Promise<ScheduleFile[]>
+}
+
+export async function fetchScheduleLog(name: string): Promise<{ name: string; bytes: number; records: ScheduleRecord[] }> {
+  const response = await fetch(`/api/schedule/logs/${encodeURIComponent(name)}`)
+  if (response.status === 401) {
+    throw new Error('需要重新登录。')
+  }
+  if (!response.ok) {
+    throw new Error('调度日志没有读到。')
+  }
+  return response.json() as Promise<{ name: string; bytes: number; records: ScheduleRecord[] }>
 }
 
 export interface GitlabUser {

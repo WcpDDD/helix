@@ -184,7 +184,7 @@ async function save() {
   <main class="project">
     <header class="head">
       <h1>管理项目</h1>
-      <p>业务读当前项目主分支的工作目录。仓库拉下来之后，在固定时间点拉取，也可以手动拉取或推送。</p>
+      <p>业务读当前项目主分支的工作目录。心跳会把落后的版本拉齐，也可以手动拉取或推送。</p>
     </header>
 
     <p v-if="!ready" class="note">正在读取项目。</p>

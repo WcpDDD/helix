@@ -54,7 +54,20 @@ class IssueBodyApiTest {
 	}
 
 	@Test
+	void bodyIsReadWhenTheIssueIsOnlyOnGitlab() throws Exception {
+		when(gitlabIssues.description(eq("secret-token"), eq("hackers.oalite.com"), eq("qingflow-develop"),
+				eq("qingflow-workspace"), eq(880232))).thenReturn("只在 GitLab 上的正文");
+
+		mockMvc.perform(get("/api/issues/880232/body").sessionAttr(AuthController.SESSION_TOKEN, "secret-token"))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.body").value("只在 GitLab 上的正文"));
+	}
+
+	@Test
 	void unknownIssueIsNotFound() throws Exception {
+		when(gitlabIssues.description(eq("secret-token"), eq("hackers.oalite.com"), eq("qingflow-develop"),
+				eq("qingflow-workspace"), eq(999999))).thenThrow(new GitlabIssueException(404));
+
 		mockMvc.perform(get("/api/issues/999999/body").sessionAttr(AuthController.SESSION_TOKEN, "secret-token"))
 				.andExpect(status().isNotFound());
 	}

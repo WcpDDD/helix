@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
+import TaskCreate from '@/components/TaskCreate.vue'
 import TaskDetail from '@/components/TaskDetail.vue'
 import TaskNext from '@/components/TaskNext.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
@@ -18,6 +19,7 @@ const selectedCode = ref<string | null>(typeof route.query.task === 'string' ? r
 const tasks = ref<Task[]>([])
 const ready = ref(false)
 const loadError = ref('')
+const creating = ref(false)
 
 const board = computed(() => tasks.value.map(applyTask))
 
@@ -76,6 +78,13 @@ function open(task: Task) {
   selectedCode.value = task.code
 }
 
+async function created(code: string) {
+  creating.value = false
+  tasks.value = await fetchTasks()
+  rememberPeople(tasks.value)
+  selectedCode.value = code
+}
+
 function countOf(name: StageFilter): number {
   if (name === '已关闭') return board.value.filter((task) => task.status === '已关闭').length
   if (name === '已上线') return board.value.filter((task) => task.status === '已上线').length
@@ -95,8 +104,9 @@ function isOverdue(task: Task): boolean {
 <template>
   <main class="tasks">
     <header class="tasks-head">
-      <div>
+      <div class="title">
         <h1>任务</h1>
+        <button type="button" class="create" @click="creating = true">创建任务</button>
       </div>
       <div class="filters" role="tablist" aria-label="按阶段筛选">
         <button
@@ -134,7 +144,10 @@ function isOverdue(task: Task): boolean {
               #{{ task.code }}
               <span v-if="(task.issues?.length ?? 0) > 0" class="issue-count">{{ task.issues?.length }} 张子 issue</span>
             </span>
-            <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
+            <span class="marks">
+              <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
+              <span v-if="task.hitl" class="hitl">hitl</span>
+            </span>
           </span>
           <span class="rail-desc">{{ task.description }}</span>
           <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
@@ -190,7 +203,10 @@ function isOverdue(task: Task): boolean {
               <TaskPeople part="owners" :owners="task.owners ?? []" />
             </td>
             <td>
-              <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
+              <span class="marks">
+                <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
+                <span v-if="task.hitl" class="hitl">hitl</span>
+              </span>
             </td>
             <td class="next">
               <TaskNext :task="task" variant="row" />
@@ -217,7 +233,10 @@ function isOverdue(task: Task): boolean {
             #{{ task.code }}
             <span v-if="(task.issues?.length ?? 0) > 0" class="issue-count">{{ task.issues?.length }} 张子 issue</span>
           </span>
-          <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
+          <span class="marks">
+            <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
+            <span v-if="task.hitl" class="hitl">hitl</span>
+          </span>
         </div>
         <p>{{ task.description }}</p>
         <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
@@ -242,6 +261,7 @@ function isOverdue(task: Task): boolean {
     </ul>
 
     <p v-if="ready && !loadError && visibleTasks.length === 0" class="empty">这个阶段还没有任务。</p>
+    <TaskCreate v-if="creating" @close="creating = false" @created="created" />
   </main>
 </template>
 
@@ -263,12 +283,27 @@ function isOverdue(task: Task): boolean {
   margin-bottom: 18px;
 }
 
+.title {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
 h1 {
   margin: 0;
   font-size: 28px;
   line-height: 1.2;
   font-weight: 650;
   letter-spacing: -0.03em;
+}
+
+.create {
+  border: 0;
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: var(--accent);
+  color: white;
+  cursor: pointer;
 }
 
 .filters {
@@ -346,11 +381,21 @@ h1 {
 }
 
 .rail-top,
-.rail-owner {
+.rail-owner,
+.marks {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.marks {
+  flex-wrap: nowrap;
+  justify-content: flex-end;
+}
+
+td .marks {
+  justify-content: flex-start;
 }
 
 .rail-desc {
@@ -391,7 +436,7 @@ h1 {
 
 table {
   width: 100%;
-  min-width: 1340px;
+  min-width: 1410px;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
@@ -414,7 +459,7 @@ table {
 }
 
 .col-state {
-  width: 90px;
+  width: 156px;
 }
 
 .col-next {
@@ -496,7 +541,8 @@ tbody tr.selected td:first-child {
   font-size: 12px;
 }
 
-.state {
+.state,
+.hitl {
   display: inline-flex;
   align-items: center;
   padding: 3px 8px;
@@ -505,6 +551,11 @@ tbody tr.selected td:first-child {
   white-space: nowrap;
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.hitl {
+  background: #fde8e4;
+  color: #9a3412;
 }
 
 .state.proposal {

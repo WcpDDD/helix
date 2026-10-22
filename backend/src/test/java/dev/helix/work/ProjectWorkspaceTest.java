@@ -157,6 +157,35 @@ class ProjectWorkspaceTest {
 		assertThat(Files.readString(checkout.resolve("remote.txt"))).isEqualTo("远端");
 	}
 
+	@Test
+	void pullFastForwardsPastUnrelatedLocalEdits() throws Exception {
+		Path origin = temp.resolve("origin.git");
+		git(temp, "init", "--bare", "-b", "main", origin.toString());
+		Path seed = temp.resolve("seed");
+		git(temp, "init", "-b", "main", seed.toString());
+		Files.writeString(seed.resolve("remote.txt"), "一");
+		Files.writeString(seed.resolve("local.txt"), "原");
+		commitAll(seed, "初始");
+		git(seed, "remote", "add", "origin", origin.toString());
+		git(seed, "push", "origin", "main");
+
+		ProjectEntity project = new ProjectEntity("样本", "example.test", "probe", "dirty");
+		ProjectWorkspaces workspaces = new ProjectWorkspaces(temp.resolve("work"), null, null);
+		Path checkout = workspaces.directory(project);
+		git(temp, "clone", origin.toString(), checkout.toString());
+		Files.writeString(checkout.resolve("local.txt"), "本地还在改");
+
+		Files.writeString(seed.resolve("remote.txt"), "二");
+		commitAll(seed, "远端提交");
+		git(seed, "push", "origin", "main");
+		workspaces.pullNow(project, null);
+
+		WorkSnapshot followed = workspaces.status(project, null);
+		assertThat(followed.behind()).isZero();
+		assertThat(Files.readString(checkout.resolve("remote.txt"))).isEqualTo("二");
+		assertThat(Files.readString(checkout.resolve("local.txt"))).isEqualTo("本地还在改");
+	}
+
 	private static void commitAll(Path directory, String message) throws Exception {
 		git(directory, "add", "-A");
 		git(directory, "-c", "user.name=Helix", "-c", "user.email=helix@localhost", "commit", "-m", message);

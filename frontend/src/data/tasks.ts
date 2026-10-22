@@ -72,6 +72,7 @@ export interface Task {
   owners?: string[]
   status: TaskStatus
   stage: TaskStage
+  hitl?: boolean
   startedAt: string
   expectedEndAt: string
   finishedAt: string | null
