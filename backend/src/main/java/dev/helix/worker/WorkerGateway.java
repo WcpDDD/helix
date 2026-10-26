@@ -31,6 +31,14 @@ public final class WorkerGateway {
 				return;
 			}
 			int issue = Integer.parseInt(bits[2]);
+			if (bits.length == 4 && "spec".equals(bits[3])) {
+				if (!"GET".equals(method)) {
+					write(exchange, 405, "");
+					return;
+				}
+				reply(exchange, sessions.spec(issue));
+				return;
+			}
 			long agent = agent(exchange);
 			if (bits.length == 4 && "messages".equals(bits[3]) && "POST".equals(method)) {
 				String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);

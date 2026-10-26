@@ -1,13 +1,17 @@
 package dev.helix.worker;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
 import java.net.InetSocketAddress;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.concurrent.Executors;
 
 import com.sun.net.httpserver.HttpServer;
@@ -25,6 +29,11 @@ public final class WorkerProcess {
 		String name = setting("HELIX_WORKER_NAME", "本机");
 		int port = Integer.parseInt(setting("HELIX_WORKER_PORT", "8091"));
 		Path root = Path.of(setting("HELIX_WORKER_ROOT", System.getProperty("user.home") + "/helix-workers"));
+		String repo = setting("HELIX_REPO", "");
+		if (!repo.isEmpty()) {
+			WorkerInit.ensure(root, Path.of(repo));
+		}
+		loadToolchain();
 		AgentKitRuntime runtime = new AgentKitRuntime(new AgentKitProperties(
 				null, setting("AGENTKIT_MODEL", ""), setting("AGENTKIT_BASE_URL", ""), setting("AGENTKIT_API_KEY", ""), null),
 				root.resolve("agent-sessions"));
@@ -40,7 +49,7 @@ public final class WorkerProcess {
 		HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 		System.out.println("worker " + id + " 监听 " + address);
 		while (true) {
-			beat(client, server, id, name, address);
+			beat(client, server, id, name, address, sessions.running());
 			Thread.sleep(BEAT);
 		}
 	}
@@ -64,6 +73,45 @@ public final class WorkerProcess {
 				""";
 		String body = agentBody == null || agentBody.isBlank() ? "" : "\n# 这个 Agent 的定义\n\n按这份定义行事。\n\n" + agentBody.strip() + "\n";
 		return base + "\n" + play + body;
+	}
+
+	static List<String> toolchainCommand(Path env) {
+		String javaBin = Path.of(System.getProperty("java.home"), "bin", "java").toString();
+		List<String> command = new ArrayList<>();
+		command.add("bash");
+		command.add("-c");
+		command.add("set -a; source \"$1\"; set +a; export HELIX_TOOLCHAIN_LOADED=1; shift; exec \"$@\"");
+		command.add("bash");
+		command.add(env.toString());
+		command.add(javaBin);
+		command.addAll(ManagementFactory.getRuntimeMXBean().getInputArguments());
+		command.add("-cp");
+		command.add(System.getProperty("java.class.path"));
+		command.add(WorkerProcess.class.getName());
+		return List.copyOf(command);
+	}
+
+	private static void loadToolchain() {
+		if ("1".equals(System.getenv("HELIX_TOOLCHAIN_LOADED"))) {
+			return;
+		}
+		Path env = Path.of(System.getProperty("user.home"), ".helix", "toolchain", "env.sh");
+		if (!Files.isRegularFile(env)) {
+			return;
+		}
+		ProcessBuilder builder = new ProcessBuilder(toolchainCommand(env));
+		builder.inheritIO();
+		try {
+			int code = builder.start().waitFor();
+			System.exit(code);
+		}
+		catch (IOException exception) {
+			throw new IllegalStateException("工具环境没有加载。");
+		}
+		catch (InterruptedException exception) {
+			Thread.currentThread().interrupt();
+			throw new IllegalStateException("工具环境没有加载。");
+		}
 	}
 
 	private static int issueOf(Path workspace) {
@@ -93,8 +141,26 @@ public final class WorkerProcess {
 		return false;
 	}
 
-	private static void beat(HttpClient client, String server, String id, String name, String address) {
-		String payload = "{\"id\":\"" + json(id) + "\",\"name\":\"" + json(name) + "\",\"address\":\"" + json(address) + "\"}";
+	static String heartbeatJson(String id, String name, String address, List<WorkerSessions.Run> runs) {
+		StringBuilder body = new StringBuilder();
+		body.append("{\"id\":\"").append(json(id)).append("\",\"name\":\"").append(json(name)).append("\",\"address\":\"")
+				.append(json(address)).append("\",\"runs\":[");
+		if (runs != null) {
+			for (int index = 0; index < runs.size(); index++) {
+				if (index > 0) {
+					body.append(',');
+				}
+				WorkerSessions.Run run = runs.get(index);
+				body.append("{\"issue\":").append(run.issue()).append(",\"agentId\":").append(run.agentId()).append('}');
+			}
+		}
+		body.append("]}");
+		return body.toString();
+	}
+
+	private static void beat(HttpClient client, String server, String id, String name, String address,
+			List<WorkerSessions.Run> runs) {
+		String payload = heartbeatJson(id, name, address, runs);
 		HttpRequest request = HttpRequest.newBuilder(URI.create(server + "/api/workers/heartbeat"))
 				.timeout(Duration.ofSeconds(3))
 				.header("Content-Type", "application/json")

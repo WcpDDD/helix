@@ -7,6 +7,7 @@ import java.util.Optional;
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
 
+import dev.helix.worker.AgentPresence;
 import dev.helix.worker.AgentSessionService;
 
 import org.slf4j.Logger;
@@ -25,23 +26,38 @@ public class ManagerAnalysis {
 
 	private final MockRuntime runtime;
 
+	private final AgentPresence presence;
+
 	private final ScheduleLog journal;
 
 	private final JsonMapper json = new JsonMapper();
 
-	public ManagerAnalysis(AgentRepository agents, AgentSessionService sessions, MockRuntime runtime, ScheduleLog journal) {
+	public ManagerAnalysis(AgentRepository agents, AgentSessionService sessions, MockRuntime runtime, AgentPresence presence,
+			ScheduleLog journal) {
 		this.agents = agents;
 		this.sessions = sessions;
 		this.runtime = runtime;
+		this.presence = presence;
 		this.journal = journal;
 	}
 
 	public void analyze(String accessToken, ProjectEntity project, int iid, List<String> labels) {
+		analyze(accessToken, project, iid, labels, "");
+	}
+
+	public void analyze(String accessToken, ProjectEntity project, int iid, List<String> labels, String goal) {
 		if (project.getId() == null) {
 			return;
 		}
+		boolean delegated = goal != null && !goal.isBlank();
 		if (labels != null && labels.contains(ProposalDraft.HITL)) {
 			journal.write("coordinate", Map.of("issue", iid, "action", "stop", "note", "已经派给人。"));
+			return;
+		}
+		Optional<AgentPresence.Run> live = presence.running(iid);
+		if (live.isPresent()) {
+			String who = who(project, live.get().agentId());
+			journal.write("coordinate", Map.of("issue", iid, "action", "stop", "tag", who, "note", who + " 还在运行。"));
 			return;
 		}
 		Optional<MockRuntime.Lease> busy = runtime.running(project.getId(), iid);
@@ -53,21 +69,40 @@ public class ManagerAnalysis {
 		AgentEntity manager = agents.findWithSkillsByTag(project.getId(), "manager").orElse(null);
 		if (manager == null) {
 			journal.write("coordinate", Map.of("issue", iid, "action", "stop", "note", "没有配置 manager。"));
+			if (delegated) {
+				throw new ResponseStatusException(org.springframework.http.HttpStatus.CONFLICT, "没有配置 manager。");
+			}
 			return;
 		}
 		try {
 			sessions.create(project.getId(), iid, manager.getId());
 			ObjectNode body = json.createObjectNode();
-			body.put("text", "做这一轮。");
+			String text = delegated ? "目标：" + goal.strip() + "。做这一轮。" : "做这一轮。";
+			body.put("text", text);
 			sessions.say(project.getId(), iid, manager.getId(), json.writeValueAsString(body));
 		}
 		catch (ResponseStatusException exception) {
 			String reason = exception.getReason() == null ? "manager 会话没有送出去。" : exception.getReason();
 			log.warn("manager 会话没有送出去 #{}：{}", iid, reason);
 			journal.write("coordinate", Map.of("issue", iid, "action", "stop", "tag", "manager", "note", reason));
+			if (delegated) {
+				throw exception;
+			}
 			return;
 		}
 		journal.write("coordinate", Map.of("issue", iid, "action", "ask", "tag", "manager", "note", "交给 manager 的会话。"));
+	}
+
+	private String who(ProjectEntity project, long agentId) {
+		if (agentId <= 0) {
+			return "agent";
+		}
+		return agents.findWithSkillsById(agentId, project.getId())
+				.map(agent -> {
+					String tag = agent.getTag();
+					return tag == null || tag.isBlank() ? agent.getName() : tag;
+				})
+				.orElse("agent");
 	}
 
 }

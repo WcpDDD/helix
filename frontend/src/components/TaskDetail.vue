@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote } from '@/api/client'
+import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, fetchGoal, startGoal, stopGoal, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote, type GoalStatus } from '@/api/client'
 import TaskNext from '@/components/TaskNext.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
 import { agentTags } from '@/data/agentTags'
@@ -30,6 +30,11 @@ const pane = ref<'issue' | 'goal' | 'agent'>('issue')
 const sessionFull = ref(false)
 const goalDraft = ref('')
 const goalText = ref('')
+const goalPhase = ref<GoalStatus['phase']>('idle')
+const goalNote = ref('')
+const goalError = ref('')
+const goalBusy = ref(false)
+let goalTimer = 0
 const seats = ref<IssueAgent[]>([])
 const focusAgent = ref<'group' | number>('group')
 const sessionState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -86,6 +91,7 @@ watch(
 watch(pane, async () => {
   await nextTick()
   bodyEl.value?.scrollTo({ top: 0 })
+  if (pane.value === 'goal' && !goalText.value) void refreshOpenGoal()
 })
 
 const graphIssues = computed(() => props.task.issues ?? [])
@@ -200,14 +206,99 @@ const hiddenNotes = computed(() => (issueNotes.value.length > 3 ? issueNotes.val
 const leadingNotes = computed(() => (hiddenNotes.value.length > 0 ? issueNotes.value.slice(0, 1) : issueNotes.value))
 const trailingNotes = computed(() => (hiddenNotes.value.length > 0 ? issueNotes.value.slice(-1) : []))
 
-function commitGoal() {
-  const text = goalDraft.value.trim()
-  goalText.value = text || '做到测试通过'
+function applyGoal(status: GoalStatus) {
+  goalPhase.value = status.phase
+  goalNote.value = status.note
 }
 
-function clearGoal() {
-  goalText.value = ''
-  goalDraft.value = ''
+async function commitGoal() {
+  const text = goalDraft.value.trim() || '做到测试通过'
+  goalBusy.value = true
+  goalError.value = ''
+  try {
+    const status = await startGoal(props.task.code, text)
+    goalText.value = text
+    applyGoal(status)
+  }
+  catch (error) {
+    goalError.value = error instanceof Error ? error.message : '委托没有发出去'
+  }
+  finally {
+    goalBusy.value = false
+  }
+}
+
+async function clearGoal() {
+  goalBusy.value = true
+  goalError.value = ''
+  try {
+    await stopGoal(props.task.code)
+    goalText.value = ''
+    goalDraft.value = ''
+    applyGoal({ phase: 'idle', note: '' })
+  }
+  catch (error) {
+    goalError.value = error instanceof Error ? error.message : '委托没有停下来'
+  }
+  finally {
+    goalBusy.value = false
+  }
+}
+
+async function refreshGoal() {
+  if (!goalText.value) return
+  try {
+    const status = await fetchGoal(props.task.code)
+    if (status.phase === 'idle') return
+    applyGoal(status)
+  }
+  catch {
+    // 轮询失败时留着上一轮的阶段
+  }
+}
+
+function stopGoalPoll() {
+  window.clearInterval(goalTimer)
+  goalTimer = 0
+}
+
+async function refreshOpenGoal() {
+  try {
+    const status = await fetchGoal(props.task.code)
+    if (status.phase === 'idle') return
+    if (!goalText.value) goalText.value = '做到测试通过'
+    applyGoal(status)
+  }
+  catch {
+    // 打不开进度时留在委托表单
+  }
+}
+
+function startGoalPoll() {
+  stopGoalPoll()
+  if (!goalText.value) return
+  goalTimer = window.setInterval(() => {
+    void refreshGoal()
+  }, 4000)
+}
+
+watch(goalText, () => {
+  startGoalPoll()
+})
+
+async function resumeGoal(text: string) {
+  goalBusy.value = true
+  goalError.value = ''
+  try {
+    applyGoal(await startGoal(props.task.code, text))
+    startGoalPoll()
+  }
+  catch (error) {
+    goalError.value = error instanceof Error ? error.message : '委托没有发出去'
+  }
+  finally {
+    goalBusy.value = false
+  }
 }
 
 watch(
@@ -216,6 +307,9 @@ watch(
     const requestId = id
     goalDraft.value = ''
     goalText.value = ''
+    goalError.value = ''
+    applyGoal({ phase: 'idle', note: '' })
+    if (pane.value === 'goal') void refreshOpenGoal()
     issueBody.value = ''
     issueBodyState.value = 'loading'
     issueNotes.value = []
@@ -683,9 +777,17 @@ async function openAttachment(path: string | undefined, agentId: number) {
   }
 }
 
-onMounted(() => window.addEventListener('keydown', onKeydown))
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+  if (goalText.value) {
+    void resumeGoal(goalText.value)
+    return
+  }
+  if (pane.value === 'goal') void refreshOpenGoal()
+})
 onUnmounted(() => {
   closeStream()
+  stopGoalPoll()
   window.removeEventListener('keydown', onKeydown)
 })
 </script>
@@ -904,7 +1006,8 @@ onUnmounted(() => {
           <span>目标</span>
           <textarea v-model="goalDraft" rows="5" placeholder="做到测试通过" />
         </label>
-        <button type="button" class="goal-start" @click="commitGoal">委托开发</button>
+        <p v-if="goalError" class="goal-error">{{ goalError }}</p>
+        <button type="button" class="goal-start" :disabled="goalBusy" @click="commitGoal">委托开发</button>
       </template>
       <template v-else>
         <div class="goal-card">
@@ -912,11 +1015,12 @@ onUnmounted(() => {
           <p>{{ goalText }}</p>
         </div>
         <ol class="goal-phases" aria-label="目标进度">
-          <li class="on"><span>1</span>初始化</li>
-          <li><span>2</span>轮转</li>
-          <li><span>3</span>待确认</li>
+          <li :class="{ done: goalPhase === 'turn' || goalPhase === 'confirm' }"><span>1</span>初始化</li>
+          <li :class="{ on: goalPhase === 'turn', done: goalPhase === 'confirm' }"><span>2</span>轮转</li>
+          <li :class="{ on: goalPhase === 'confirm' }"><span>3</span>待确认</li>
         </ol>
-        <p class="goal-status">停在初始化。manager 看着 issue 和 MR，决定下一步派谁。</p>
+        <p class="goal-status">{{ goalNote }}</p>
+        <p v-if="goalError" class="goal-error">{{ goalError }}</p>
         <button type="button" class="goal-stop" @click="clearGoal">结束委托</button>
       </template>
     </div>
@@ -2163,10 +2267,20 @@ textarea {
   font-variant-numeric: tabular-nums;
 }
 
+.goal-phases li.done {
+  color: var(--ink);
+  background: #fff;
+}
+
 .goal-phases li.on {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
+}
+
+.goal-error {
+  margin: 12px 0 0;
+  color: #b42318;
 }
 
 .goal-status {

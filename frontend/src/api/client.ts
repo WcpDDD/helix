@@ -529,6 +529,44 @@ export interface IssueNote {
   body: string
 }
 
+export interface GoalStatus {
+  phase: 'idle' | 'turn' | 'confirm'
+  note: string
+}
+
+export function fetchGoal(number: string): Promise<GoalStatus> {
+  return fetchIssueJson<GoalStatus>(`/api/issues/${encodeURIComponent(number)}/goal`)
+}
+
+export async function startGoal(number: string, text: string): Promise<GoalStatus> {
+  const response = await fetch(`/api/issues/${encodeURIComponent(number)}/goal`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  return readGoal(response)
+}
+
+export async function stopGoal(number: string): Promise<void> {
+  const response = await fetch(`/api/issues/${encodeURIComponent(number)}/goal`, { method: 'DELETE' })
+  if (response.status === 204 || response.ok) return
+  await readGoal(response)
+}
+
+async function readGoal(response: Response): Promise<GoalStatus> {
+  if (response.status === 401) {
+    const error = new Error('login')
+    error.name = 'IssueReadAuthError'
+    throw error
+  }
+  const body = await response.json().catch(() => null) as { phase?: GoalStatus['phase']; note?: string; detail?: string; message?: string } | null
+  if (!response.ok) {
+    const detail = body?.detail || body?.message || `${response.status}`
+    throw new Error(detail)
+  }
+  return { phase: body?.phase ?? 'idle', note: body?.note ?? '' }
+}
+
 export async function fetchIssueNotes(number: string): Promise<IssueNote[]> {
   const payload = await fetchIssueJson<{ notes: IssueNote[] }>(
     `/api/issues/${encodeURIComponent(number)}/notes`,
@@ -545,7 +583,11 @@ async function fetchIssueJson<T>(path: string): Promise<T> {
   }
   if (!response.ok) {
     const body = await response.json().catch(() => null)
-    const detail = body && typeof body.detail === 'string' ? body.detail : ''
+    const detail = body && typeof body.detail === 'string' && body.detail
+      ? body.detail
+      : body && typeof body.message === 'string'
+        ? body.message
+        : ''
     const error = new Error(detail || `${path} returned ${response.status}`)
     if (detail.includes('还在准备')) error.name = 'WorkspacePreparing'
     throw error

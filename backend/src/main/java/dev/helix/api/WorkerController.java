@@ -7,6 +7,7 @@ import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
 import dev.helix.board.CurrentProject;
+import dev.helix.worker.AgentPresence;
 import dev.helix.worker.AgentSessionService;
 import dev.helix.worker.WorkerIssueRead;
 import dev.helix.worker.SubtaskScheduler;
@@ -45,13 +46,16 @@ public class WorkerController {
 
 	private final WorkerIssueRead issueRead;
 
+	private final AgentPresence presence;
+
 	public WorkerController(WorkerRegistry registry, SubtaskScheduler scheduler, AgentSessionService agentSessions,
-			CurrentProject currentProject, WorkerIssueRead issueRead) {
+			CurrentProject currentProject, WorkerIssueRead issueRead, AgentPresence presence) {
 		this.registry = registry;
 		this.scheduler = scheduler;
 		this.agentSessions = agentSessions;
 		this.currentProject = currentProject;
 		this.issueRead = issueRead;
+		this.presence = presence;
 	}
 
 	@GetMapping("/issues/{number}/agent-session")
@@ -296,7 +300,13 @@ public class WorkerController {
 		String id = request == null ? null : request.id();
 		String name = request == null ? null : request.name();
 		String address = request == null ? null : request.address();
-		return registry.heartbeat(id, name, address);
+		WorkerView view = registry.heartbeat(id, name, address);
+		if (request != null && request.runs() != null) {
+			presence.replace(id, request.runs().stream()
+					.map(run -> new AgentPresence.Reported(run.issue(), run.agentId()))
+					.toList());
+		}
+		return view;
 	}
 
 	@GetMapping("/workers/{id}/dispatches")
@@ -328,7 +338,10 @@ public class WorkerController {
 		return ResponseEntity.status(status).body(view);
 	}
 
-	public record HeartbeatRequest(String id, String name, String address) {
+	public record HeartbeatRequest(String id, String name, String address, List<RunReport> runs) {
+	}
+
+	public record RunReport(int issue, long agentId) {
 	}
 
 	public record BindingRequest(Long issueId, String workspace) {

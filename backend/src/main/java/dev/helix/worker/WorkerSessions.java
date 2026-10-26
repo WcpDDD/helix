@@ -3,6 +3,7 @@ package dev.helix.worker;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -19,8 +20,15 @@ public final class WorkerSessions {
 
 	private final ConversationBoard board;
 
+	private final WorkerSpec specs;
+
 	public WorkerSessions(Path root, Map<String, String> environment, SessionStarter starter) {
 		this.board = new ConversationBoard(root, environment, starter::start);
+		this.specs = new WorkerSpec(root);
+	}
+
+	public List<Run> running() {
+		return board.running();
 	}
 
 	public Result accept(String body) {
@@ -80,6 +88,15 @@ public final class WorkerSessions {
 		}
 		catch (RuntimeException exception) {
 			return new Result(503, detail("对话没有读到。"));
+		}
+	}
+
+	public Result spec(int issueNumber) {
+		try {
+			return specs.read(issueNumber);
+		}
+		catch (RuntimeException exception) {
+			return new Result(503, detail("规格没有读到。"));
 		}
 	}
 
@@ -145,6 +162,9 @@ public final class WorkerSessions {
 	}
 
 	public record Result(int status, String body) {
+	}
+
+	public record Run(int issue, long agentId) {
 	}
 
 	@FunctionalInterface

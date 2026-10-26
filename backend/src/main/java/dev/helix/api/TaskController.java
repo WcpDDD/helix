@@ -95,7 +95,7 @@ public class TaskController {
 
 	@GetMapping("/tasks/{code}/spec")
 	public SpecCheckout spec(@PathVariable int code, HttpSession session) {
-		return specs.checkout(token(session), currentProject.resolve(session).getId(), code);
+		return specs.checkout(currentProject.resolve(session).getId(), code);
 	}
 
 	@PostMapping("/tasks/{code}/status")

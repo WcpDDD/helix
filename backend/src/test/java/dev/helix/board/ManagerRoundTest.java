@@ -1,7 +1,10 @@
 package dev.helix.board;
 
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.List;
+
+import dev.helix.worker.AgentPresence;
 
 import dev.helix.gitlab.IssueStatusText;
 import dev.helix.worker.AgentSessionService;
@@ -34,7 +37,7 @@ class ManagerRoundTest {
 		when(repository.findWithSkillsByTag(3L, "manager")).thenReturn(java.util.Optional.of(manager));
 		when(sessions.create(3L, 232, 8L)).thenReturn(new IssueAgentView(8L, "manager", "manager", true, true, "worker-local", "本机"));
 		ScheduleLog journal = new ScheduleLog(Path.of("target", "manager-ask-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
-		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, new MockRuntime(), journal);
+		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, new MockRuntime(), new AgentPresence(Duration.ofSeconds(15)), journal);
 
 		analysis.analyze("tok", project, 232, List.of("ai/managed", "type/feature"));
 		analysis.analyze("tok", project, 232, List.of("ai/managed", "type/feature"));
@@ -57,12 +60,33 @@ class ManagerRoundTest {
 		MockRuntime runtime = new MockRuntime();
 		runtime.hold(3L, 232, developer);
 		ScheduleLog journal = new ScheduleLog(Path.of("target", "manager-busy-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
-		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, runtime, journal);
+		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, runtime, new AgentPresence(Duration.ofSeconds(15)), journal);
 
 		analysis.analyze("tok", project, 232, List.of("ai/managed"));
 
 		verify(sessions, never()).create(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyLong());
 		verify(sessions, never()).say(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyLong(), anyString());
+	}
+
+	@Test
+	void aReportedRunKeepsTheManagerAsleep() {
+		AgentRepository repository = mock(AgentRepository.class);
+		AgentSessionService sessions = mock(AgentSessionService.class);
+		ProjectEntity project = new ProjectEntity("轻流", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace");
+		setId(project, 3L);
+		AgentEntity proposal = new AgentEntity(project, "proposal", "你写提案。");
+		proposal.retag("proposal");
+		setAgentId(proposal, 2L);
+		when(repository.findWithSkillsById(2L, 3L)).thenReturn(java.util.Optional.of(proposal));
+		AgentPresence presence = new AgentPresence(Duration.ofSeconds(15));
+		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, 2L)));
+		ScheduleLog journal = new ScheduleLog(Path.of("target", "manager-live-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
+		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, new MockRuntime(), presence, journal);
+
+		analysis.analyze("tok", project, 235, List.of("ai/managed"));
+
+		verify(sessions, never()).say(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyLong(), anyString());
+		assertThat(journal.read("schedule.jsonl", 10).records()).filteredOn(row -> "stop".equals(row.get("action"))).isNotEmpty();
 	}
 
 	@Test
@@ -72,7 +96,7 @@ class ManagerRoundTest {
 		ProjectEntity project = new ProjectEntity("轻流", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace");
 		setId(project, 3L);
 		ScheduleLog journal = new ScheduleLog(Path.of("target", "manager-hitl-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
-		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, new MockRuntime(), journal);
+		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, new MockRuntime(), new AgentPresence(Duration.ofSeconds(15)), journal);
 
 		analysis.analyze("tok", project, 232, List.of("ai/managed", "ai/hitl"));
 

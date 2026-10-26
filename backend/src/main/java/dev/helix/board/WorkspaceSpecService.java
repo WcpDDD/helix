@@ -1,14 +1,18 @@
 package dev.helix.board;
 
-import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
-import dev.helix.gitlab.GitlabIssueClient;
-import dev.helix.gitlab.GitlabIssueException;
-import dev.helix.gitlab.IssueSpecText;
-import dev.helix.gitlab.IssueSpecText.SpecLinks;
-import dev.helix.work.ProjectWorkspaces;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.json.JsonMapper;
+
+import dev.helix.worker.AgentSessionEntity;
+import dev.helix.worker.AgentSessionRepository;
+import dev.helix.worker.WorkerConversationClient;
+import dev.helix.worker.WorkerConversationClient.Exchange;
+import dev.helix.worker.WorkerRegistry;
+import dev.helix.worker.WorkerRegistry.CallableWorker;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
@@ -17,67 +21,74 @@ import org.springframework.web.server.ResponseStatusException;
 @Service
 public class WorkspaceSpecService {
 
-	private final IssueRepository issues;
+	private final AgentSessionRepository sessions;
 
-	private final GitlabIssueClient gitlab;
+	private final WorkerRegistry registry;
 
-	private final ProjectWorkspaces workspaces;
+	private final WorkerConversationClient workers;
 
-	public WorkspaceSpecService(IssueRepository issues, GitlabIssueClient gitlab, ProjectWorkspaces workspaces) {
-		this.issues = issues;
-		this.gitlab = gitlab;
-		this.workspaces = workspaces;
+	private final JsonMapper json = new JsonMapper();
+
+	public WorkspaceSpecService(AgentSessionRepository sessions, WorkerRegistry registry, WorkerConversationClient workers) {
+		this.sessions = sessions;
+		this.registry = registry;
+		this.workers = workers;
 	}
 
-	public SpecCheckout checkout(String accessToken, long projectId, int number) {
-		IssueEntity issue = issues.findInProject(projectId, number)
-				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-		ProjectEntity project = issue.getProject();
-		String description = readDescription(accessToken, project, number);
-		SpecLinks links;
-		try {
-			links = IssueSpecText.links(description);
-		}
-		catch (IllegalArgumentException exception) {
-			throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
-		}
-		var root = workspaces.require(project, accessToken);
-		String branch = workspaces.branch(root);
-		if (links.paths().isEmpty()) {
-			return new SpecCheckout(branch, "", List.of());
-		}
-		List<SpecCheckout.SpecFile> files = new ArrayList<>();
-		for (String path : links.paths()) {
-			List<String> markdown = workspaces.markdownUnder(root, path);
-			if (markdown.isEmpty()) {
-				throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+	public SpecCheckout checkout(long projectId, int number) {
+		Set<String> seen = new LinkedHashSet<>();
+		CallableWorker worker = null;
+		for (AgentSessionEntity session : sessions.findByProjectIdAndIssueNumberOrderByAgentIdAsc(projectId, number)) {
+			if (!seen.add(session.getWorkerId())) {
+				continue;
 			}
-			for (String file : markdown) {
-				files.add(new SpecCheckout.SpecFile(file, workspaces.read(root, file)));
+			worker = registry.live(session.getWorkerId()).orElse(null);
+			if (worker != null) {
+				break;
 			}
 		}
-		files.sort(Comparator.comparing(SpecCheckout.SpecFile::path));
-		return new SpecCheckout(branch, workspaces.head(root), List.copyOf(files));
+		if (worker == null) {
+			throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "规格在编写分支上，还没有存活的 worker。");
+		}
+		Exchange exchange = workers.get(worker.address(), "/sessions/" + number + "/spec");
+		if (exchange.status() == 404) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND, detail(exchange.body(), "这张 issue 还没有工作区。"));
+		}
+		if (exchange.status() != 200) {
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, detail(exchange.body(), "规格没有读到。"));
+		}
+		return parse(exchange.body());
 	}
 
-	private String readDescription(String accessToken, ProjectEntity project, int number) {
+	private SpecCheckout parse(String body) {
+		JsonNode node;
 		try {
-			return gitlab.description(accessToken, project.getGitHost(), project.getGitOwner(), project.getGitRepo(),
-					number);
+			node = json.readTree(body == null ? "" : body);
 		}
-		catch (GitlabIssueException exception) {
-			throw failure(exception);
+		catch (RuntimeException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "规格没有读到。");
 		}
+		String branch = node.path("branch").asString("");
+		String commit = node.path("commit").asString("");
+		List<SpecCheckout.SpecFile> files = new java.util.ArrayList<>();
+		for (JsonNode file : node.path("files")) {
+			files.add(new SpecCheckout.SpecFile(file.path("path").asString(""), file.path("markdown").asString("")));
+		}
+		return new SpecCheckout(branch, commit, List.copyOf(files));
 	}
 
-	private static ResponseStatusException failure(GitlabIssueException exception) {
-		if (exception.status() == 401 || exception.status() == 403) {
-			return new ResponseStatusException(HttpStatus.UNAUTHORIZED);
+	private static String detail(String body, String fallback) {
+		if (body == null || body.isBlank()) {
+			return fallback;
 		}
-		if (exception.status() == 404) {
-			return new ResponseStatusException(HttpStatus.NOT_FOUND);
+		try {
+			JsonNode node = new JsonMapper().readTree(body);
+			String text = node.path("detail").asString("");
+			return text.isBlank() ? fallback : text;
 		}
-		return new ResponseStatusException(HttpStatus.BAD_GATEWAY);
+		catch (RuntimeException exception) {
+			return fallback;
+		}
 	}
 
 }

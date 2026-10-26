@@ -3,7 +3,7 @@ export const agentTagGroups = [
     id: 'global',
     label: '全局',
     tags: [
-      { id: 'manager', hint: '协调各阶段需要谁参与，只给建议，不推动状态' },
+      { id: 'manager', hint: '按 issue、MR、流程规范、产物和上一个 agent 的结果做流转。定期唤起；issue 未结束、无人机协同、没有 agent 在做时才运行' },
       { id: 'arch', hint: '拆解中大型任务，管理并行契约，并审契约破坏' },
     ],
   },
@@ -19,14 +19,14 @@ export const agentTagGroups = [
     id: 'develop',
     label: '开发',
     tags: [
-      { id: 'developer', hint: '实现' },
-      { id: 'reviewer', hint: '审阅实现' },
+      { id: 'developer', hint: '先写技术方案。冒烟用例落盘后再实现' },
+      { id: 'reviewer', hint: '对照方案、spec、实现和冒烟用例。不改东西，不执行冒烟' },
     ],
   },
   {
     id: 'test',
     label: '测试',
-    tags: [{ id: 'tester', hint: '执行测试' }],
+    tags: [{ id: 'tester', hint: '先写冒烟用例。审阅通过后跑冒烟，再写最终用例并做最终测试' }],
   },
 ] as const
 

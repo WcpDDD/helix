@@ -30,7 +30,7 @@ class ProposalHandoffTest {
 		handoff.hand(project, 321);
 
 		verify(sessions).create(3L, 321, 8L);
-		verify(sessions).say(eq(3L), eq(321), eq(8L), contains("做这一轮。"));
+		verify(sessions).say(eq(3L), eq(321), eq(8L), contains("按提案规范把提案写回来。"));
 	}
 
 	@Test

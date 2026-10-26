@@ -34,7 +34,8 @@
 .topbar {
   display: flex;
   align-items: center;
-  gap: 20px;
+  gap: 16px;
+  min-width: 0;
   margin-bottom: 36px;
 }
 
@@ -42,6 +43,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
+  flex: none;
   font-weight: 650;
   letter-spacing: 0.04em;
 }
@@ -52,13 +54,23 @@
 
 .nav {
   display: flex;
-  gap: 6px;
+  flex: 1;
+  gap: 4px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.nav::-webkit-scrollbar {
+  display: none;
 }
 
 .nav a {
-  padding: 6px 12px;
+  flex: none;
+  padding: 6px 10px;
   border-radius: 999px;
   color: var(--muted);
+  white-space: nowrap;
 }
 
 .nav a.router-link-exact-active {
@@ -69,6 +81,7 @@
 .bar-end {
   display: flex;
   align-items: center;
+  flex: none;
   gap: 14px;
   margin-left: auto;
   min-width: 0;
@@ -94,6 +107,7 @@
 }
 
 .project-current {
+  position: relative;
   display: block;
   max-width: 100%;
   padding: 6px 18px 6px 0;
@@ -362,18 +376,28 @@
   font-weight: 650;
 }
 
-@media (max-width: 800px) {
+@media (max-width: 1100px) {
   .topbar {
     flex-wrap: wrap;
+    align-items: center;
+  }
+
+  .nav {
+    order: 3;
+    flex: 1 0 100%;
+    flex-wrap: wrap;
+    overflow: visible;
   }
 
   .status,
   .bar-end {
-    width: 100%;
-    margin-left: 0;
-    justify-content: space-between;
+    width: auto;
+    margin-left: auto;
+    justify-content: flex-end;
   }
+}
 
+@media (max-width: 800px) {
   .cards {
     grid-template-columns: 1fr;
   }

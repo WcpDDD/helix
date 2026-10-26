@@ -46,6 +46,18 @@ public final class ConversationBoard {
 		this.runner = runner;
 	}
 
+	public List<WorkerSessions.Run> running() {
+		List<WorkerSessions.Run> runs = new ArrayList<>();
+		for (IssueTalk talk : talks.values()) {
+			synchronized (talk.lock) {
+				if (talk.busy) {
+					runs.add(new WorkerSessions.Run(talk.issueNumber, talk.agentId));
+				}
+			}
+		}
+		return List.copyOf(runs);
+	}
+
 	public WorkerSessions.Result open(int issueNumber) {
 		return open(issueNumber, 0);
 	}
@@ -719,6 +731,9 @@ public final class ConversationBoard {
 			return "这轮没有开始。";
 		}
 		String lower = message.toLowerCase();
+		if (message.contains("还没配")) {
+			return message.length() > 180 ? message.substring(0, 180) : message;
+		}
 		if (lower.contains("glpat-") || lower.contains("bearer ") || lower.contains("api_key") || message.contains("Authorization")) {
 			return "这轮没有开始。";
 		}
