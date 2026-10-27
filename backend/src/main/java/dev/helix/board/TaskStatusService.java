@@ -19,12 +19,16 @@ public class TaskStatusService {
 
 	private final IssueRepository issues;
 
+	private final ProjectRepository projects;
+
 	private final GitlabIssueClient gitlab;
 
 	private final WorkspaceBoard boards;
 
-	public TaskStatusService(IssueRepository issues, GitlabIssueClient gitlab, WorkspaceBoard boards) {
+	public TaskStatusService(IssueRepository issues, ProjectRepository projects, GitlabIssueClient gitlab,
+			WorkspaceBoard boards) {
 		this.issues = issues;
+		this.projects = projects;
 		this.gitlab = gitlab;
 		this.boards = boards;
 	}
@@ -61,11 +65,11 @@ public class TaskStatusService {
 		if (boards.current(projectId).isChild(number)) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND);
 		}
-		IssueEntity main = issues.findInProject(projectId, number)
+		ProjectEntity project = projects.findById(projectId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-		ProjectEntity project = main.getProject();
 		String current = read(accessToken, project, number);
-		String stage = IssueStatusText.stageFor(requested, main.getTask().getRollupStage());
+		String declared = IssueStatusText.stageOf(current);
+		String stage = IssueStatusText.stageFor(requested, declared == null ? "" : declared);
 		String next = IssueStatusText.withStatus(current, requested, stage);
 		boolean close = "已关闭".equals(requested) || "已驳回".equals(requested) || "已上线".equals(requested);
 		try {
@@ -76,21 +80,20 @@ public class TaskStatusService {
 			if (exception.status() == 401 || exception.status() == 403) {
 				throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
 			}
-			return followIssue(accessToken, main);
+			return followIssue(accessToken, project, number);
 		}
-		adopt(main, requested, stage);
+		issues.findInProject(projectId, number).ifPresent(main -> adopt(main, requested, stage));
 		return new Transition(requested, stage, true);
 	}
 
-	private Transition followIssue(String accessToken, IssueEntity main) {
-		ProjectEntity project = main.getProject();
-		String description = read(accessToken, project, main.getGitIssueNumber());
+	private Transition followIssue(String accessToken, ProjectEntity project, int number) {
+		String description = read(accessToken, project, number);
 		String issueStatus = IssueStatusText.statusOf(description);
 		if (issueStatus == null) {
-			return new Transition(main.getTask().getRollupStatus(), main.getTask().getRollupStage(), false);
+			return new Transition("提案中", "提案", false);
 		}
-		String stage = stageFromIssue(description, issueStatus, main.getTask().getRollupStage());
-		adopt(main, issueStatus, stage);
+		String declared = IssueStatusText.stageOf(description);
+		String stage = declared == null ? IssueStatusText.stageFor(issueStatus, "") : declared;
 		return new Transition(issueStatus, stage, false);
 	}
 
