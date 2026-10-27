@@ -1,5 +1,6 @@
 package dev.helix.worker;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import tools.jackson.databind.json.JsonMapper;
@@ -70,14 +71,35 @@ public class WorkerIssueRead {
 		}
 	}
 
+	public String comment(String workerId, int number, String text) {
+		if (text == null || text.isBlank()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "评论不能空。");
+		}
+		Bound bound = bound(workerId, number);
+		try {
+			GitlabComment note = gitlab.comment(bound.token(), bound.project().getGitHost(), bound.project().getGitOwner(),
+					bound.project().getGitRepo(), number, text.strip());
+			ObjectNode body = json.createObjectNode();
+			body.put("id", note.id());
+			body.put("body", note.body() == null ? "" : note.body());
+			return json.writeValueAsString(body);
+		}
+		catch (GitlabIssueException exception) {
+			if (exception.status() == 401 || exception.status() == 403) {
+				throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "没有登录。");
+			}
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "评论没有提交。");
+		}
+	}
+
 	public String read(String workerId, int number) {
 		Bound bound = bound(workerId, number);
 		String token = bound.token();
 		ProjectEntity project = bound.project();
-		String description;
+		GitlabIssueClient.IssueDetail detail;
 		List<GitlabComment> comments;
 		try {
-			description = gitlab.description(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), number);
+			detail = gitlab.detail(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), number);
 			comments = gitlab.comments(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), number);
 		}
 		catch (GitlabIssueException exception) {
@@ -90,7 +112,9 @@ public class WorkerIssueRead {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "issue 没有读到。");
 		}
 		ObjectNode body = json.createObjectNode();
-		body.put("description", description == null ? "" : description);
+		body.put("description", detail.description() == null ? "" : detail.description());
+		ArrayNode labels = body.putArray("labels");
+		detail.labels().forEach(labels::add);
 		ArrayNode notes = body.putArray("comments");
 		if (comments != null) {
 			for (GitlabComment comment : comments) {
@@ -99,7 +123,58 @@ public class WorkerIssueRead {
 				note.put("body", comment.body() == null ? "" : comment.body());
 			}
 		}
+		ArrayNode mrs = body.putArray("mrs");
+		for (MergeRequestRef ref : mergeRequestsIn(detail.description(), project.getGitHost())) {
+			ObjectNode mr = mrs.addObject();
+			mr.put("repo", ref.owner() + "/" + ref.repo());
+			mr.put("iid", ref.iid());
+			mr.put("url", ref.url());
+			try {
+				GitlabIssueClient.MrDetail found = gitlab.mergeRequest(token, project.getGitHost(), ref.owner(),
+						ref.repo(), ref.iid());
+				mr.put("title", found.title());
+				mr.put("state", found.state());
+				mr.put("sourceBranch", found.sourceBranch());
+				mr.put("sha", found.sha());
+				mr.put("pipeline", found.pipeline());
+				mr.put("changes", found.changes());
+				ArrayNode files = mr.putArray("files");
+				found.files().forEach(files::add);
+			}
+			catch (GitlabIssueException exception) {
+				mr.put("error", exception.status() == 404 ? "MR 不存在" : "MR 没有读到");
+			}
+		}
 		return json.writeValueAsString(body);
+	}
+
+	private static final java.util.regex.Pattern MR_URL = java.util.regex.Pattern
+			.compile("https?://([^/\\s]+)/([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)/-/merge_requests/(\\d+)");
+
+	private record MergeRequestRef(String owner, String repo, int iid, String url) {
+	}
+
+	static List<MergeRequestRef> mergeRequestsIn(String description, String gitHost) {
+		List<MergeRequestRef> refs = new ArrayList<>();
+		if (description == null || description.isBlank()) {
+			return refs;
+		}
+		String host = gitHost == null ? "" : gitHost.replaceFirst("^https?://", "").replaceFirst("/+$", "");
+		java.util.Set<String> seen = new java.util.HashSet<>();
+		java.util.regex.Matcher matcher = MR_URL.matcher(description);
+		while (matcher.find() && refs.size() < 5) {
+			if (!host.isBlank() && !host.equals(matcher.group(1))) {
+				continue;
+			}
+			String owner = matcher.group(2);
+			String repo = matcher.group(3);
+			int iid = Integer.parseInt(matcher.group(4));
+			if (!seen.add(owner + "/" + repo + "!" + iid)) {
+				continue;
+			}
+			refs.add(new MergeRequestRef(owner, repo, iid, matcher.group(0)));
+		}
+		return refs;
 	}
 
 	private Bound bound(String workerId, int number) {

@@ -19,11 +19,13 @@ public final class WorkerGuide {
 				- 没有 agent 正在工作。
 				少一件，这一轮不会叫你。你被叫醒，就是这三件已经成立。这一轮做完流转就停，等下一次被叫醒。不要守着这张 issue 连续派。
 
-				这一轮只看这四样，不凭印象决定下一跳：
-				- issue 和关联 MR 的当前状态。
+				这一轮只看这几样，不凭印象决定下一跳：
+				- issue 的描述、评论、标签，以及关联 MR 的实时状态。MR 以 issue 接口返回的 mrs 为准：state、sha、changes、pipeline。评论是说法，mrs 是事实。
 				- 流程规范：`skills/dev-flow/SKILL.md`，状态机在 `skills/dev-flow/references/state-machine.md`。
 				- 产物要求：`skills/dev-flow/references/deliverables.md`。只核当前节点那一节。口头说完成不算。
-				- 当前 agent 的执行结果：它写回 issue 的结论，以及 MR 里已经有的内容。
+				- 当前 agent 的执行结果：它提交到 issue 评论里的工作记录和希望处理的问题。描述里的旧结论不能代替这条评论。
+
+				每一轮的第一件事，是把评论里的说法和 mrs 对上：谁说推了代码，谁的 commit 就要在这个 MR 的 sha 和 changes 里；谁说测试通过了，跑测试那一轮的 MR 状态也要经得起对。对不上，那一项按没完成处理，把说这个话的角色再派一次，只让它把没做实的那一项补上；测试结果对不上就不算数，打回重跑。这一类不一致不打 ai/hitl，也不摘 ai/managed，先把话对齐。
 
 				目标写在这张 issue 上。没写目标时，做到测试通过。状态是 已上线、已关闭、已驳回 时，目标已经结束，不要派任务。
 				交给人确认时，打上 ai/hitl，并摘掉 ai/managed，然后停。两件事都要调用接口，不要只写在回复里。已经有 ai/hitl 就不要再打。状态已经结束时，也要摘掉 ai/managed。
@@ -41,8 +43,11 @@ public final class WorkerGuide {
 				- 最终测试通过：停，交给人确认：打上 ai/hitl，摘掉 ai/managed。
 				审阅没通过，或冒烟、最终测试没通过：派 developer 改实现。改完从 reviewer 重新对齐，对齐通过后再从冒烟测试做起。方案或 spec 变了，先派 tester 重写冒烟用例。
 				可上线、待上线池：上面几截已经做完才应该在这里。不再重派。停，交给人确认：打上 ai/hitl，摘掉 ai/managed。
-				开始前自己拉取这张 issue 的最新描述和评论，并看关联 MR 的当前状态，再看刚做完的 agent 写回的结论。派给名单里的角色之后，它会把结论写回 issue，并登记一段有效期。缺了哪一截，派 `deliverables.md` 里写的谁补。不要把计划或口头说明当成完成。
-				回复先写四行：目标、状态、下一步、理由。下一步只能是派给某个 tag、等待某个 tag、或交给人确认。交给人确认必须打上 ai/hitl 并摘掉 ai/managed，不要只写在回复里。需要派发时，只调用一次下面的派任务接口。
+				开始前自己拉取这张 issue 的最新描述和全部评论，并看关联 MR 的当前状态。comments 按时间从早到晚，末尾是最新评论。刚做完的 agent 每一轮都要在评论里留下两段：工作记录、希望处理的问题。两段都要有，并且能看出是它这个角色写的。没有要别人处理的问题，希望处理的问题写「无」。缺一段，或只有对话里的口头说明，就不算做完，把这个角色再派一次，只让它补上这条评论。缺评论不要打 ai/hitl，也不要摘 ai/managed。你自己不提交工作记录，你只核对别人有没有按这个格式提交。缺了哪一截，派 `deliverables.md` 里写的谁补。不要把计划或口头说明当成完成。
+				判一截齐，必须在理由里引用决定它的那一行原文：MR 的 state 和 sha、评论里写结果的那一行、自审文档里真机那一行。文件在不在、几个字节，不算引用。引用不出来，这一截就不算齐。
+				评论里的希望处理的问题，每一条在下一轮都要写出去向：你答（带依据），随交给人确认一起上抛，或因此停下。数过就放下不算处理。去向写进这一轮的理由里，处理完才派下一跳。
+				派单只指路：写这个角色该读的 skill 和文件、该停在哪。不要把方案内容抄进任务文本，不要替角色定方法、参数或取值。评论里还没定的取值，不许写进派单当成已定。
+				回复先写四行：目标、状态、下一步、理由。下一步只能是派给某个 tag、等待某个 tag、或交给人确认。理由必须带这一轮核对到的证据：MR 的 state 和 sha、引用了哪条评论的哪一行。交给人确认必须打上 ai/hitl 并摘掉 ai/managed，不要只写在回复里。交给人确认的那一轮，四行里必须带齐：卡在哪里；相关 agent 已经得出的结论（去读它的对话原文，不要猜）；还没有去向的希望处理的问题；确认之后会发生什么。人确认的是你摆出来的事实，不是你的总结。需要派发时，只调用一次下面的派任务接口。
 
 				# 调度其他 Agent
 
@@ -54,7 +59,7 @@ public final class WorkerGuide {
 
 				GET %s/api/workers/%s/issues/%d
 
-				返回 description 和 comments。目标在描述里。
+				返回 description、labels、comments 和 mrs。目标在描述里。mrs 是描述里每个 MR 的实时状态：state、sourceBranch、sha、pipeline、changes 和文件列表。评论是 agent 的说法，mrs 是 GitLab 的事实，两者对不上以 mrs 为准。
 
 				## 摘掉托管
 
@@ -105,21 +110,29 @@ public final class WorkerGuide {
 		return """
 				# 工作方式
 
-				1. 开始之前，拉取这张 issue 的最新信息，包括描述和评论。
-				2. 根据拉到的信息规划自己这一步的行动。
-				3. 行动过程中，把关键信息记在这张 issue 上。写在描述顶部的 helix-board 里，一行是自己的角色和结论。不要改 helix 状态块。
-				4. 无法自决时立刻停，把原因写在这张 issue 上。不要给人派待办，也不要打 ai/hitl。
+				1. 开始之前，拉取这张 issue 的最新描述和全部评论。最新评论是这一步的输入，不要只看描述。评论里点到你这一步的问题，先处理再动手。
+				2. 根据拉到的描述和最新评论规划自己这一步的行动。
+				3. 本机要跑的检查，先按这个仓自己的方式装上依赖再跑。刚 clone 的仓没有 node_modules、虚拟环境或构建产物时，本机已经有仓要求的运行时，就直接安装。安装慢、要内部源，继续装。装完跑这次改动对应的测试或类型检查，把命令和结果写进工作记录。装不上或跑失败，把命令和完整报错写进工作记录，停在这一步。不要写成本地没有环境、改由 CI 代替，也不要用读代码代替跑过。
+				4. 每一轮结束前都要在这张 issue 上留一条评论，不要等整件事做完。这一轮做到哪就写到哪，中途停下也要留。评论里写两段：工作记录、希望处理的问题。写上自己的角色。没有要别人处理的问题，希望处理的问题写「无」。不要只写在回复里，也不要只改描述。不要改 helix 状态块。
+				5. 无法自决时立刻停。把原因写进评论的希望处理的问题。不要给人派待办，也不要打 ai/hitl。
 
 				不改 issue 阶段，也不调度其他角色。
 
 				# 这张 issue
 
-				当前 issue 是 #%d。用下面的接口读取，范围只限这张 issue。
+				当前 issue 是 #%d。用下面的接口读取和提交评论，范围只限这张 issue。
 
 				GET %s/api/workers/%s/issues/%d
 
-				返回 description 和 comments。
-				""".formatted(issueNumber, origin, worker, issueNumber);
+				返回 description 和 comments。comments 按时间从早到晚，末尾是最新评论。
+
+				## 提交评论
+
+				POST %s/api/workers/%s/issues/%d/comments
+				Content-Type: application/json
+
+				{"body":"角色：proposal\\n工作记录：……\\n希望处理的问题：无"}
+				""".formatted(issueNumber, origin, worker, issueNumber, origin, worker, issueNumber);
 	}
 
 	private static String origin(String server) {

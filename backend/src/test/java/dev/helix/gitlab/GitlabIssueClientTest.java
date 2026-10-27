@@ -52,6 +52,25 @@ class GitlabIssueClientTest {
 	}
 
 	@Test
+	void postsACommentOntoTheIssue() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitlabIssueClient client = new GitlabIssueClient(builder.build());
+		server.expect(requestTo(
+				"https://hackers.oalite.com/api/v4/projects/qingflow-develop%2Fqingflow-workspace/issues/21/notes"))
+				.andExpect(method(HttpMethod.POST))
+				.andExpect(header("Authorization", "Bearer tok"))
+				.andExpect(content().json("{\"body\":\"工作记录：写完了\"}"))
+				.andRespond(withSuccess(
+						"{\"id\":12,\"body\":\"工作记录：写完了\",\"system\":false,\"created_at\":\"2026-10-27T00:00:00Z\",\"author\":{\"name\":\"人\"}}",
+						MediaType.APPLICATION_JSON));
+
+		assertThat(client.comment("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 21, "工作记录：写完了").id())
+				.isEqualTo(12);
+		server.verify();
+	}
+
+	@Test
 	void readsTheDescriptionWithTheSessionToken() {
 		RestClient.Builder builder = RestClient.builder();
 		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();

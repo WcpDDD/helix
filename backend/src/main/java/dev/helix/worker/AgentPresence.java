@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -22,6 +23,7 @@ public class AgentPresence {
 
 	private final ConcurrentHashMap<String, ConcurrentHashMap<String, Run>> byWorker = new ConcurrentHashMap<>();
 
+	@Autowired
 	public AgentPresence(@Value("${helix.worker.lease:15s}") Duration lease) {
 		this(lease, Clock.systemUTC());
 	}

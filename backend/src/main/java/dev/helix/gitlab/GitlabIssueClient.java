@@ -33,6 +33,10 @@ public class GitlabIssueClient {
 	}
 
 	public String description(String accessToken, String gitHost, String owner, String repo, int iid) {
+		return detail(accessToken, gitHost, owner, repo, iid).description();
+	}
+
+	public IssueDetail detail(String accessToken, String gitHost, String owner, String repo, int iid) {
 		String origin = origin(gitHost);
 		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
 		try {
@@ -41,7 +45,36 @@ public class GitlabIssueClient {
 					.header("Authorization", "Bearer " + accessToken)
 					.retrieve()
 					.body(Payload.class);
-			return payload == null || payload.description() == null ? "" : payload.description();
+			String description = payload == null || payload.description() == null ? "" : payload.description();
+			List<String> labels = payload == null || payload.labels() == null ? List.of() : List.copyOf(payload.labels());
+			return new IssueDetail(description, labels);
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
+	public MrDetail mergeRequest(String accessToken, String gitHost, String owner, String repo, int iid) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		try {
+			MrPayload payload = http.get()
+					.uri(URI.create(origin + "/api/v4/projects/" + project + "/merge_requests/" + iid + "/changes"))
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(MrPayload.class);
+			if (payload == null || payload.iid() == null || payload.iid() <= 0) {
+				throw new GitlabIssueException(502);
+			}
+			List<String> files = new ArrayList<>();
+			if (payload.changes() != null) {
+				for (Change change : payload.changes()) {
+					files.add(text(change.newPath()));
+				}
+			}
+			return new MrDetail(payload.iid(), text(payload.title()), text(payload.state()),
+					text(payload.sourceBranch()), text(payload.sha()), pipeline(payload.headPipeline()),
+					payload.changes() == null ? 0 : payload.changes().length, List.copyOf(files));
 		}
 		catch (RestClientException exception) {
 			throw failed(exception);
@@ -303,6 +336,29 @@ public class GitlabIssueClient {
 		}
 	}
 
+	public GitlabComment comment(String accessToken, String gitHost, String owner, String repo, int iid, String body) {
+		String origin = origin(gitHost);
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		Map<String, String> form = new LinkedHashMap<>();
+		form.put("body", body);
+		try {
+			NotePayload payload = http.post()
+					.uri(URI.create(origin + "/api/v4/projects/" + project + "/issues/" + iid + "/notes"))
+					.header("Authorization", "Bearer " + accessToken)
+					.body(form)
+					.retrieve()
+					.body(NotePayload.class);
+			if (payload == null) {
+				throw new GitlabIssueException(502);
+			}
+			return new GitlabComment(payload.id(), author(payload.author()), payload.createdAt(),
+					payload.body() == null ? "" : payload.body());
+		}
+		catch (RestClientException exception) {
+			throw failed(exception);
+		}
+	}
+
 	public List<GitlabComment> comments(String accessToken, String gitHost, String owner, String repo, int iid) {
 		String origin = origin(gitHost);
 		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
@@ -409,6 +465,10 @@ public class GitlabIssueClient {
 		return author(author);
 	}
 
+	private static String pipeline(MrPipeline head) {
+		return head == null || head.status() == null ? "" : head.status();
+	}
+
 	private static Author first(Author[] authors) {
 		return authors == null || authors.length == 0 ? null : authors[0];
 	}
@@ -439,7 +499,27 @@ public class GitlabIssueClient {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	private record Payload(@JsonProperty("description") String description) {
+	private record Payload(@JsonProperty("description") String description, List<String> labels) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	private record MrPayload(Integer iid, String title, String state, @JsonProperty("source_branch") String sourceBranch,
+			String sha, @JsonProperty("head_pipeline") MrPipeline headPipeline, Change[] changes) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	private record MrPipeline(String status) {
+	}
+
+	@JsonIgnoreProperties(ignoreUnknown = true)
+	private record Change(@JsonProperty("new_path") String newPath) {
+	}
+
+	public record IssueDetail(String description, List<String> labels) {
+	}
+
+	public record MrDetail(int iid, String title, String state, String sourceBranch, String sha, String pipeline,
+			int changes, List<String> files) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

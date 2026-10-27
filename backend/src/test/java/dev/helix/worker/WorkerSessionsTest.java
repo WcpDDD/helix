@@ -184,6 +184,15 @@ class WorkerSessionsTest {
 				.contains("自己拉取这张 issue").contains("摘掉 ai/managed")
 				.contains("你是被定期唤起的").contains("没有人机协同的要求").contains("没有 agent 正在工作")
 				.contains("流程规范").contains("references/deliverables.md").contains("当前 agent 的执行结果")
+				.contains("希望处理的问题").contains("你自己不提交工作记录").contains("再派一次")
+				.contains("缺评论不要打 ai/hitl")
+				.contains("评论是说法，mrs 是事实").contains("每一轮的第一件事")
+				.contains("引用决定它的那一行原文").contains("不算引用")
+				.contains("每一条在下一轮都要写出去向").contains("数过就放下不算处理")
+				.contains("派单只指路").contains("不许写进派单当成已定")
+				.contains("理由必须带这一轮核对到的证据")
+				.contains("去读它的对话原文，不要猜")
+				.contains("labels、comments 和 mrs")
 				.contains("生成冒烟用例").contains("不跑冒烟").contains("跑最终测试")
 				.contains("交给人确认时，打上 ai/hitl，并摘掉 ai/managed").contains("交给人确认：打上 ai/hitl，摘掉 ai/managed")
 				.contains("POST http://127.0.0.1:8080/api/workers/worker-local/issues/21/hitl")
@@ -191,7 +200,10 @@ class WorkerSessionsTest {
 				.contains("/api/workers/worker-local/issues/21/agents/{agent}/tasks")
 				.doesNotContain("# 工作方式");
 		assertThat(WorkerGuide.worker(21, "http://127.0.0.1:8080", "worker-local")).contains("无法自决时立刻停")
+				.contains("先按这个仓自己的方式装上依赖再跑").contains("不要写成本地没有环境")
+				.contains("最新评论是这一步的输入").contains("每一轮结束前都要在这张 issue 上留一条评论")
 				.contains("GET http://127.0.0.1:8080/api/workers/worker-local/issues/21")
+				.contains("POST http://127.0.0.1:8080/api/workers/worker-local/issues/21/comments")
 				.doesNotContain("调度其他 Agent").doesNotContain("/issues/21/hitl").doesNotContain("/tasks");
 		assertThat(WorkerProcess.instructions("  ", 21, "http://127.0.0.1:8080", "worker-local")).doesNotContain("这个 Agent 的定义");
 	}

@@ -12,7 +12,6 @@ import tools.jackson.databind.node.ObjectNode;
 import dev.helix.board.AgentEntity;
 import dev.helix.board.AgentRepository;
 import dev.helix.board.AgentSkillEntity;
-import dev.helix.board.MockDispatch;
 import dev.helix.worker.SubtaskScheduler.AgentSessionView;
 import dev.helix.worker.WorkerRegistry.CallableWorker;
 
@@ -37,20 +36,16 @@ public class AgentSessionService {
 
 	private final AgentRepository definitions;
 
-	private final MockDispatch mocks;
-
 	private final JsonMapper json = new JsonMapper();
 
 	public AgentSessionService(AgentSessionRepository sessions, WorkerRegistry registry, WorkerSessionClient workers,
-			WorkerConversationClient conversations, SubtaskScheduler scheduler, AgentRepository definitions,
-			MockDispatch mocks) {
+			WorkerConversationClient conversations, SubtaskScheduler scheduler, AgentRepository definitions) {
 		this.sessions = sessions;
 		this.registry = registry;
 		this.workers = workers;
 		this.conversations = conversations;
 		this.scheduler = scheduler;
 		this.definitions = definitions;
-		this.mocks = mocks;
 	}
 
 	public AgentSessionView open(long projectId, int number) {
@@ -136,9 +131,6 @@ public class AgentSessionService {
 		String text = taskText(body);
 		long projectId = project(workerId, number);
 		AgentEntity agent = agent(projectId, agentKey);
-		if (!onWorker(agent)) {
-			return mocks.answer(agent, number);
-		}
 		String payload = profiled("{\"text\":\"" + escape(text) + "\"}", agent);
 		AgentSessionEntity existing = sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agent.getId()).orElse(null);
 		if (existing != null) {
@@ -278,11 +270,6 @@ public class AgentSessionService {
 		}
 		return definitions.findWithSkillsByTag(projectId, key)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "没有这个 agent。"));
-	}
-
-	private static boolean onWorker(AgentEntity agent) {
-		String tag = agent.getTag();
-		return "manager".equals(tag) || "proposal".equals(tag);
 	}
 
 	private static String taskText(String body) {

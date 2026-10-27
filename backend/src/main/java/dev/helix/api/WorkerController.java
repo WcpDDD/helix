@@ -247,6 +247,16 @@ public class WorkerController {
 		}
 	}
 
+	@PostMapping("/workers/{id}/issues/{number}/comments")
+	public ResponseEntity<?> comment(@PathVariable String id, @PathVariable int number, @RequestBody CommentRequest request) {
+		try {
+			return json(issueRead.comment(id, number, request == null ? "" : request.body()));
+		}
+		catch (ResponseStatusException exception) {
+			return failure(exception);
+		}
+	}
+
 	@GetMapping("/workers/{id}/issues/{number}")
 	public ResponseEntity<?> issue(@PathVariable String id, @PathVariable int number) {
 		try {
@@ -336,6 +346,9 @@ public class WorkerController {
 		ScheduleView view = scheduler.schedule(issueId, agentId, message);
 		HttpStatus status = "interrupted".equals(view.state()) ? HttpStatus.CONFLICT : HttpStatus.OK;
 		return ResponseEntity.status(status).body(view);
+	}
+
+	public record CommentRequest(String body) {
 	}
 
 	public record HeartbeatRequest(String id, String name, String address, List<RunReport> runs) {

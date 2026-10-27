@@ -63,7 +63,9 @@ class AgentSessionApiTest {
 				.filter(item -> item.getIssueNumber() == 880010 || item.getIssueNumber() == 880011
 						|| item.getIssueNumber() == 880012 || item.getIssueNumber() == 880030)
 				.forEach(sessions::delete);
-		agents.findAll().stream().filter(agent -> "guide-proposal".equals(agent.getName())).forEach(agents::delete);
+		agents.findAll().stream()
+				.filter(agent -> "guide-proposal".equals(agent.getName()) || "guide-review".equals(agent.getName()))
+				.forEach(agents::delete);
 		workers.deleteById("worker-idle");
 		workers.deleteById("worker-busy");
 		workers.deleteById("worker-fail");
@@ -214,6 +216,19 @@ class AgentSessionApiTest {
 					.contains("\"agentBody\":\"身份\"")
 					.contains("skills/dev-flow/SKILL.md");
 			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, 880030, proposal.getId())).isPresent();
+
+			AgentEntity review = new AgentEntity(projects.findAll(Sort.by("id")).getFirst(), "guide-review", "审提案");
+			review.retag("proposal-review");
+			agents.save(review);
+			mockMvc.perform(post("/api/workers/worker-guide/issues/880030/agents/proposal-review/tasks")
+							.contentType("application/json")
+							.content("{\"text\":\"审这张提案\"}"))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.assistant.seq").value(2));
+			assertThat(seen.get()).contains("POST /sessions/880030/messages?agent=" + review.getId())
+					.contains("审这张提案")
+					.doesNotContain("状态改为");
+			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, 880030, review.getId())).isPresent();
 
 			mockMvc.perform(get("/api/workers/worker-guide/issues/880030/agents/proposal/conversations"))
 					.andExpect(status().isOk())
