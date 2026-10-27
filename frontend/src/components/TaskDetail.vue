@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, fetchGoal, startGoal, stopGoal, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote, type GoalStatus } from '@/api/client'
+import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, fetchGoal, startGoal, stopGoal, confirmHitl, releaseHitl, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote, type GoalStatus } from '@/api/client'
 import TaskNext from '@/components/TaskNext.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
 import { agentTags } from '@/data/agentTags'
@@ -21,6 +21,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   close: []
+  refresh: []
 }>()
 
 type ShownMessage = ConversationMessage & { agentId: number; agentName: string; agentTag: string }
@@ -34,7 +35,13 @@ const goalPhase = ref<GoalStatus['phase']>('idle')
 const goalNote = ref('')
 const goalError = ref('')
 const goalBusy = ref(false)
+const hitlDraft = ref('')
+const hitlBusy = ref(false)
+const hitlError = ref('')
+const hitlReason = ref('')
+const hitlCleared = ref(false)
 let goalTimer = 0
+const showHitl = computed(() => props.task.hitl && !hitlCleared.value)
 const seats = ref<IssueAgent[]>([])
 const focusAgent = ref<'group' | number>('group')
 const sessionState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
@@ -196,10 +203,50 @@ const selectedEdge = computed(() => graphEdges.value.find((edge) => edge.id === 
 const mergeRequests = computed(() => issueView.value.mergeRequests ?? [])
 const environments = computed(() => issueView.value.environments ?? [])
 
+function localAgentPrompt(number: string): string {
+  return [
+    `继续 Helix issue #${number} 的本地开发。`,
+    '',
+    '在本机的 qingflow-workspace 仓库根目录操作。不要使用 Helix worker 的 issue 工作区。',
+    '',
+    '按 skills/worktree-setup/SKILL.md：',
+    `1. 为这次任务新建独立 worktree，目录是 .worktrees/task-${number}/。目录已存在就沿用。不要建到别的路径，也不要检出仓库的默认分支。`,
+    `2. 读父 issue #${number} 正文的「子仓协同」。对列出的每个仓库，查出关联 MR 的 source_branch，fetch 这条分支，并在 .worktrees/task-${number}/<仓目录> 检出。`,
+    `3. 运行 scripts/worktree-setup.sh ${number}`,
+    '4. 做完后列出每个仓的 worktree 路径和实际检出的分支。某个仓没有 MR 或还没 clone，停在那一项并说明，不要猜分支名。',
+  ].join('\n')
+}
+
+const localAgentCopied = ref(false)
+let localAgentTimer = 0
+
+async function copyLocalAgentPrompt() {
+  const text = localAgentPrompt(props.task.code)
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    const area = document.createElement('textarea')
+    area.value = text
+    area.setAttribute('readonly', '')
+    area.style.position = 'fixed'
+    area.style.left = '-9999px'
+    document.body.appendChild(area)
+    area.select()
+    document.execCommand('copy')
+    area.remove()
+  }
+  localAgentCopied.value = true
+  window.clearTimeout(localAgentTimer)
+  localAgentTimer = window.setTimeout(() => {
+    localAgentCopied.value = false
+  }, 2000)
+}
+
 const issueBody = ref('')
 const issueBodyState = ref<'loading' | 'ready' | 'empty' | 'login' | 'error'>('loading')
 const issueBodyHtml = computed(() => (issueBody.value ? renderMarkdown(issueBody.value) : ''))
 const issueNotes = ref<Array<IssueNote & { html: string; time: string }>>([])
+const latestNote = computed(() => issueNotes.value[issueNotes.value.length - 1] ?? null)
 const issueNotesState = ref<'loading' | 'ready' | 'empty' | 'login' | 'error'>('loading')
 const notesExpanded = ref(false)
 const hiddenNotes = computed(() => (issueNotes.value.length > 3 ? issueNotes.value.slice(1, -1) : []))
@@ -210,6 +257,64 @@ function applyGoal(status: GoalStatus) {
   goalPhase.value = status.phase
   goalNote.value = status.note
 }
+
+async function loadHitlReason() {
+  hitlReason.value = ''
+  try {
+    const seats = await fetchIssueAgents(props.task.code)
+    const manager = seats.find((seat) => seat.tag === 'manager' && seat.assigned)
+    if (!manager) return
+    const page = await fetchAgentConversations(props.task.code, manager.agentId)
+    const latest = [...page.messages].reverse().find((item) => item.role === 'assistant' && item.preview)
+    if (!latest) return
+    const full = await fetchAgentConversation(props.task.code, manager.agentId, latest.seq)
+    const text = full.parts.filter((part) => part.kind === 'text' && part.text).map((part) => part.text).join('\n')
+    hitlReason.value = text.trim()
+  } catch {
+    hitlReason.value = ''
+  }
+}
+
+async function submitHitl() {
+  hitlBusy.value = true
+  hitlError.value = ''
+  try {
+    const status = await confirmHitl(props.task.code, hitlDraft.value.trim())
+    applyGoal(status)
+    hitlCleared.value = true
+    hitlDraft.value = ''
+    emit('refresh')
+  } catch (error) {
+    hitlError.value = error instanceof Error ? error.message : '确认没有送出去'
+  } finally {
+    hitlBusy.value = false
+  }
+}
+
+async function dismissHitl() {
+  hitlBusy.value = true
+  hitlError.value = ''
+  try {
+    const status = await releaseHitl(props.task.code)
+    applyGoal(status)
+    hitlCleared.value = true
+    emit('refresh')
+  } catch (error) {
+    hitlError.value = error instanceof Error ? error.message : '确认没有结束'
+  } finally {
+    hitlBusy.value = false
+  }
+}
+
+watch(
+  () => props.task.hitl,
+  (waiting) => {
+    if (!waiting) return
+    hitlCleared.value = false
+    void loadHitlReason()
+  },
+  { immediate: true },
+)
 
 async function commitGoal() {
   const text = goalDraft.value.trim() || '做到测试通过'
@@ -788,6 +893,7 @@ onMounted(() => {
 onUnmounted(() => {
   closeStream()
   stopGoalPoll()
+  window.clearTimeout(localAgentTimer)
   window.removeEventListener('keydown', onKeydown)
 })
 </script>
@@ -798,6 +904,9 @@ onUnmounted(() => {
       <div class="detail-title">
         <button class="back" type="button" @click="emit('close')">返回列表</button>
         <span class="code">#{{ task.code }}</span>
+        <button type="button" class="local-agent" @click="copyLocalAgentPrompt">
+          {{ localAgentCopied ? '已复制' : '本地Agent继续' }}
+        </button>
       </div>
       <h2 id="task-detail-title">{{ task.description }}</h2>
       <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
@@ -849,6 +958,24 @@ onUnmounted(() => {
         </button>
       </div>
     </header>
+
+    <section v-if="showHitl" class="hitl-panel" aria-label="待确认">
+      <p class="hitl-kicker">待确认</p>
+      <h3>交给你确认</h3>
+      <p class="hitl-lead">manager 停在这里。写下你的决定。确认并继续会摘掉 ai/hitl，重新交给 manager。</p>
+      <p v-if="hitlReason" class="hitl-reason">{{ hitlReason }}</p>
+      <p v-else-if="latestNote" class="hitl-reason">{{ latestNote.body }}</p>
+      <p v-else class="hitl-empty">这张 issue 上还没有评论。决定写在下面。</p>
+      <label class="hitl-field">
+        <span>你的决定</span>
+        <textarea v-model="hitlDraft" rows="4" placeholder="按提案继续" />
+      </label>
+      <p v-if="hitlError" class="goal-error">{{ hitlError }}</p>
+      <div class="hitl-actions">
+        <button type="button" class="hitl-go" :disabled="hitlBusy" @click="submitHitl">确认并继续</button>
+        <button type="button" class="hitl-stop" :disabled="hitlBusy" @click="dismissHitl">结束确认</button>
+      </div>
+    </section>
 
     <div v-if="pane === 'issue'" ref="bodyEl" class="detail-body">
       <div class="issue-actions">
@@ -1173,6 +1300,10 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+
+.detail-title .local-agent {
+  margin-left: auto;
 }
 
 .back,
@@ -2154,6 +2285,96 @@ textarea {
   cursor: default;
 }
 
+.hitl-panel {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 16px 22px 18px;
+  border-bottom: 1px solid var(--line);
+  background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+}
+
+.hitl-kicker {
+  margin: 0 0 4px;
+  color: var(--accent);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.hitl-panel h3 {
+  margin: 0 0 6px;
+  font-size: 18px;
+}
+
+.hitl-lead,
+.hitl-empty {
+  margin: 0 0 10px;
+  color: var(--muted, #5c6570);
+  font-size: 14px;
+}
+
+.hitl-reason {
+  max-height: 160px;
+  overflow: auto;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface);
+  white-space: pre-wrap;
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.hitl-field {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.hitl-field span {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.hitl-field textarea {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 8px 10px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.hitl-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.hitl-go,
+.hitl-stop {
+  border-radius: 999px;
+  padding: 8px 14px;
+}
+
+.hitl-go {
+  background: var(--accent);
+  color: white;
+}
+
+.hitl-stop {
+  background: transparent;
+  color: var(--ink);
+  border: 1px solid var(--line);
+}
+
+.hitl-go:disabled,
+.hitl-stop:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
 .goal-pane {
   flex: 1;
   min-height: 0;
@@ -2304,7 +2525,8 @@ textarea {
 }
 
 .spec-entry,
-.gitlab {
+.gitlab,
+.local-agent {
   display: inline-flex;
   align-items: center;
   padding: 6px 14px;
@@ -2319,10 +2541,15 @@ textarea {
   color: #fff;
 }
 
-.gitlab {
+.gitlab,
+.local-agent {
   border: 1px solid var(--line);
   color: var(--accent);
+  font: inherit;
+  font-size: 13px;
   font-weight: 500;
+  background: transparent;
+  cursor: pointer;
 }
 
 .next-panel {

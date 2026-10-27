@@ -85,6 +85,11 @@ async function created(code: string) {
   selectedCode.value = code
 }
 
+async function reloadBoard() {
+  tasks.value = await fetchTasks()
+  rememberPeople(tasks.value)
+}
+
 function countOf(name: StageFilter): number {
   if (name === '已关闭') return board.value.filter((task) => task.status === '已关闭').length
   if (name === '已上线') return board.value.filter((task) => task.status === '已上线').length
@@ -153,7 +158,7 @@ function isOverdue(task: Task): boolean {
           <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
         </div>
       </aside>
-      <TaskDetail v-if="selected" :task="selected" @close="selectedCode = null" />
+      <TaskDetail v-if="selected" :task="selected" @close="selectedCode = null" @refresh="reloadBoard" />
     </div>
 
     <div v-if="ready && !loadError && !selected" class="table-wrap">

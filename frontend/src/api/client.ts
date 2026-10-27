@@ -553,6 +553,20 @@ export async function stopGoal(number: string): Promise<void> {
   await readGoal(response)
 }
 
+export async function confirmHitl(number: string, text: string): Promise<GoalStatus> {
+  const response = await fetch(`/api/issues/${encodeURIComponent(number)}/hitl`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text }),
+  })
+  return readGoal(response)
+}
+
+export async function releaseHitl(number: string): Promise<GoalStatus> {
+  const response = await fetch(`/api/issues/${encodeURIComponent(number)}/hitl`, { method: 'DELETE' })
+  return readGoal(response)
+}
+
 async function readGoal(response: Response): Promise<GoalStatus> {
   if (response.status === 401) {
     const error = new Error('login')
