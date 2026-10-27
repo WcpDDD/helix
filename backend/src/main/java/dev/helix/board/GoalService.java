@@ -56,6 +56,34 @@ public class GoalService {
 		}
 	}
 
+	public GoalView confirm(String token, ProjectEntity project, int iid, String decision) {
+		String text = decision == null || decision.isBlank() ? "人已确认，继续。" : decision.strip();
+		try {
+			gitlab.removeLabel(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), iid, ProposalDraft.HITL);
+			gitlab.addLabel(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), iid, ProposalDraft.AI);
+		}
+		catch (GitlabIssueException exception) {
+			throw failed(exception);
+		}
+		List<String> labels = new ArrayList<>(labels(token, project, iid));
+		labels.remove(ProposalDraft.HITL);
+		if (!labels.contains(ProposalDraft.AI)) {
+			labels.add(ProposalDraft.AI);
+		}
+		managers.analyze(token, project, iid, labels, "人已确认：" + text);
+		return view(token, project, iid);
+	}
+
+	public GoalView release(String token, ProjectEntity project, int iid) {
+		try {
+			gitlab.removeLabel(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), iid, ProposalDraft.HITL);
+		}
+		catch (GitlabIssueException exception) {
+			throw failed(exception);
+		}
+		return view(token, project, iid);
+	}
+
 	private GoalView view(String token, ProjectEntity project, int iid) {
 		List<String> labels = labels(token, project, iid);
 		if (labels.contains(ProposalDraft.HITL)) {

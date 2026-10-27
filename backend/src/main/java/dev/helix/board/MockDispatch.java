@@ -2,8 +2,6 @@ package dev.helix.board;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ThreadLocalRandom;
-import java.util.function.BooleanSupplier;
 
 import tools.jackson.databind.json.JsonMapper;
 import tools.jackson.databind.node.ObjectNode;
@@ -13,14 +11,13 @@ import dev.helix.gitlab.GitlabComment;
 import dev.helix.gitlab.GitlabIssueClient;
 import dev.helix.gitlab.GitlabIssueClient.OpenedIssue;
 import dev.helix.gitlab.GitlabIssueException;
-import dev.helix.gitlab.IssueStatusText;
 
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 
 /**
- * 非 manager 的派发在这里收口。不调模型：写回 issue，登记带有效期的运行状态，并有一半概率把状态推进一档。
+ * 旧的模拟派发。不再接入调度。不改 issue 状态。
  */
 @Component
 public class MockDispatch {
@@ -33,16 +30,10 @@ public class MockDispatch {
 
 	private final JsonMapper json = new JsonMapper();
 
-	private BooleanSupplier advance = () -> ThreadLocalRandom.current().nextBoolean();
-
 	public MockDispatch(GitlabIssueClient gitlab, GitlabSessionCredential credential, MockRuntime runtime) {
 		this.gitlab = gitlab;
 		this.credential = credential;
 		this.runtime = runtime;
-	}
-
-	void chance(BooleanSupplier advance) {
-		this.advance = advance;
 	}
 
 	public String answer(AgentEntity agent, int iid) {
@@ -85,14 +76,6 @@ public class MockDispatch {
 		MockAgent.Turn turn = MockAgent.run(new ManagerRound.Face(agent.getTag(), agent.getName(), agent.getBody(), skills),
 				description, labels, status, notes);
 		String written = StatusLock.keep(description, turn.description());
-		String statusAfter = status;
-		if (advance.getAsBoolean()) {
-			String next = MockRuntime.nextStatus(status);
-			if (next != null) {
-				written = IssueStatusText.withStatus(written, next, IssueStatusText.stageFor(next, IssueStatusText.stageOf(description)));
-				statusAfter = next;
-			}
-		}
 		if (!written.equals(description)) {
 			try {
 				gitlab.writeDescription(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), iid, written,
@@ -102,9 +85,8 @@ public class MockDispatch {
 				throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "issue 没有写回。");
 			}
 		}
-		String text = turn.text() + (statusAfter.equals(status) ? " 状态仍是 " : " 状态改为 ") + statusAfter + "。运行到 "
-				+ MockRuntime.format(hold.lease().until()) + "。";
-		return body(turn.tag(), text, statusAfter, hold.lease());
+		String text = turn.text() + " 状态仍是 " + status + "。运行到 " + MockRuntime.format(hold.lease().until()) + "。";
+		return body(turn.tag(), text, status, hold.lease());
 	}
 
 	private String running(String tag, MockRuntime.Lease lease) {

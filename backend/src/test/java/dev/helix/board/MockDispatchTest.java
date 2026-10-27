@@ -42,7 +42,6 @@ class MockDispatchTest {
 				.thenReturn(List.of(new OpenedIssue(232, List.of("ai/managed"))));
 
 		MockDispatch dispatch = new MockDispatch(gitlab, credential, new MockRuntime());
-		dispatch.chance(() -> false);
 		String body = dispatch.answer(proposal, 232);
 
 		assertThat(body).contains("类型不对。");
@@ -54,7 +53,7 @@ class MockDispatchTest {
 	}
 
 	@Test
-	void aRunningMockStaysBusyUntilTheLeaseEndsAndMayAdvanceStatus() {
+	void aRunningMockStaysBusyUntilTheLeaseEndsWithoutChangingStatus() {
 		GitlabIssueClient gitlab = mock(GitlabIssueClient.class);
 		GitlabSessionCredential credential = new GitlabSessionCredential();
 		credential.remember("tok");
@@ -68,21 +67,19 @@ class MockDispatchTest {
 				.thenReturn(List.of(new OpenedIssue(232, List.of("ai/managed", "type/feature"))));
 		MovingClock clock = new MovingClock(Instant.parse("2026-10-21T10:00:00Z"));
 		MockDispatch dispatch = new MockDispatch(gitlab, credential, new MockRuntime(clock));
-		dispatch.chance(() -> true);
 
 		String first = dispatch.answer(developer, 232);
 		String second = dispatch.answer(developer, 232);
 		clock.at(Instant.parse("2026-10-21T10:03:00Z"));
-		dispatch.chance(() -> false);
 		String third = dispatch.answer(developer, 232);
 
-		assertThat(first).contains("状态改为 审阅中");
+		assertThat(first).contains("状态仍是 实现中");
 		assertThat(second).contains("还在运行");
 		assertThat(third).contains("状态仍是 实现中");
-		verify(gitlab, times(1)).writeDescription(eq("tok"), eq("hackers.oalite.com"), eq("qingflow-develop"), eq("qingflow-workspace"),
-				eq(232), contains("状态：审阅中"), eq(false));
+		verify(gitlab, org.mockito.Mockito.never()).writeDescription(eq("tok"), eq("hackers.oalite.com"), eq("qingflow-develop"),
+				eq("qingflow-workspace"), eq(232), contains("状态：审阅中"), eq(false));
 		verify(gitlab, times(2)).writeDescription(eq("tok"), eq("hackers.oalite.com"), eq("qingflow-develop"), eq("qingflow-workspace"),
-				eq(232), anyString(), eq(false));
+				eq(232), contains("状态：实现中"), eq(false));
 	}
 
 	private static final class MovingClock extends Clock {

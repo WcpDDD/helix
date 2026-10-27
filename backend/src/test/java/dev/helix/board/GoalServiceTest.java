@@ -47,6 +47,46 @@ class GoalServiceTest {
 	}
 
 	@Test
+	void confirmingHandsTheDecisionBackToTheManager() {
+		GitlabIssueClient gitlab = mock(GitlabIssueClient.class);
+		AgentRepository repository = mock(AgentRepository.class);
+		AgentSessionService sessions = mock(AgentSessionService.class);
+		ProjectEntity project = project();
+		AgentEntity manager = new AgentEntity(project, "manager", "你只调度。");
+		manager.retag("manager");
+		setId(manager, 8L);
+		when(gitlab.opened("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace"))
+				.thenReturn(List.of(new OpenedIssue(235, List.of("ai/hitl"))))
+				.thenReturn(List.of(new OpenedIssue(235, List.of("ai/managed"))));
+		when(repository.findWithSkillsByTag(3L, "manager")).thenReturn(java.util.Optional.of(manager));
+		when(sessions.create(3L, 235, 8L)).thenReturn(new IssueAgentView(8L, "manager", "manager", true, true, "worker-local", "本机"));
+		GoalService goals = goals(gitlab, repository, sessions);
+
+		GoalService.GoalView view = goals.confirm("tok", project, 235, "按提案继续");
+
+		verify(gitlab).removeLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 235, "ai/hitl");
+		verify(gitlab).addLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 235, "ai/managed");
+		verify(sessions).say(eq(3L), eq(235), eq(8L), contains("人已确认：按提案继续"));
+		assertThat(view.phase()).isEqualTo("turn");
+	}
+
+	@Test
+	void releasingDropsTheHumanLabelWithoutWakingTheManager() {
+		GitlabIssueClient gitlab = mock(GitlabIssueClient.class);
+		AgentSessionService sessions = mock(AgentSessionService.class);
+		when(gitlab.opened(anyString(), anyString(), anyString(), anyString()))
+				.thenReturn(List.of(new OpenedIssue(235, List.of("type/feature"))));
+		GoalService goals = goals(gitlab, mock(AgentRepository.class), sessions);
+
+		GoalService.GoalView view = goals.release("tok", project(), 235);
+
+		verify(gitlab).removeLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 235, "ai/hitl");
+		verify(sessions, org.mockito.Mockito.never()).say(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyInt(),
+				org.mockito.ArgumentMatchers.anyLong(), anyString());
+		assertThat(view.phase()).isEqualTo("idle");
+	}
+
+	@Test
 	void aHumanTodoShowsAsWaitingForConfirmation() {
 		GitlabIssueClient gitlab = mock(GitlabIssueClient.class);
 		when(gitlab.opened(anyString(), anyString(), anyString(), anyString()))

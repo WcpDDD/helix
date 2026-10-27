@@ -50,6 +50,19 @@ public class GoalController {
 		goals.stop(token(session), project, number);
 	}
 
+	@PostMapping("/{number}/hitl")
+	public GoalView confirm(@PathVariable int number, @RequestBody GoalRequest request, HttpSession session) {
+		ProjectEntity project = currentProject.resolve(session);
+		String text = request == null ? "" : request.text();
+		return goals.confirm(token(session), project, number, text);
+	}
+
+	@DeleteMapping("/{number}/hitl")
+	public GoalView release(@PathVariable int number, HttpSession session) {
+		ProjectEntity project = currentProject.resolve(session);
+		return goals.release(token(session), project, number);
+	}
+
 	private static String token(HttpSession session) {
 		Object token = session == null ? null : session.getAttribute(AuthController.SESSION_TOKEN);
 		if (!(token instanceof String accessToken) || accessToken.isBlank()) {
