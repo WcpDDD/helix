@@ -3,6 +3,7 @@ package dev.helix.api;
 import java.util.List;
 
 import dev.helix.auth.AuthController;
+import dev.helix.auth.GitlabSessionToken;
 import dev.helix.auth.GitlabUser;
 import dev.helix.board.CurrentProject;
 import dev.helix.board.MemberRoleService;
@@ -34,10 +35,14 @@ public class MemberController {
 
 	private final CurrentProject currentProject;
 
-	public MemberController(MemberRoleService roles, MemberSyncService sync, CurrentProject currentProject) {
+	private final GitlabSessionToken tokens;
+
+	public MemberController(MemberRoleService roles, MemberSyncService sync, CurrentProject currentProject,
+			GitlabSessionToken tokens) {
 		this.roles = roles;
 		this.sync = sync;
 		this.currentProject = currentProject;
+		this.tokens = tokens;
 	}
 
 	@GetMapping
@@ -47,7 +52,7 @@ public class MemberController {
 
 	@PostMapping("/sync")
 	public MemberBoard sync(HttpServletRequest http) {
-		return sync.sync(token(http), currentProject.resolve(http.getSession(false)));
+		return sync.sync(tokens.require(http.getSession(false)), currentProject.resolve(http.getSession(false)));
 	}
 
 	@GetMapping("/roles")
@@ -67,15 +72,6 @@ public class MemberController {
 		String name = request == null ? null : request.name();
 		List<String> next = request == null ? null : request.roles();
 		return roles.assign(currentProject.resolve(http.getSession(false)), login, name, next);
-	}
-
-	private static String token(HttpServletRequest request) {
-		HttpSession session = request.getSession(false);
-		Object token = session == null ? null : session.getAttribute(AuthController.SESSION_TOKEN);
-		if (!(token instanceof String accessToken) || accessToken.isBlank()) {
-			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-		}
-		return accessToken;
 	}
 
 	private static void requireUser(HttpServletRequest request) {

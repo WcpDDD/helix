@@ -60,7 +60,7 @@ public class TaskController {
 
 	@PostMapping("/tasks")
 	public ResponseEntity<CreatedTask> create(@RequestBody CreateTask request, HttpSession session) {
-		var created = taskCreateService.create(token(session), currentProject.resolve(session), request.title(),
+		var created = taskCreateService.create(tokens.require(session), currentProject.resolve(session), request.title(),
 				request.kind(), request.fields(), request.attachments(), Boolean.TRUE.equals(request.delegate()));
 		return ResponseEntity.status(HttpStatus.CREATED)
 				.body(new CreatedTask(Integer.toString(created.iid()), created.webUrl()));
@@ -69,7 +69,7 @@ public class TaskController {
 	@PostMapping(value = "/tasks/uploads", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
 	public UploadedTaskFile upload(@RequestParam("file") MultipartFile file, HttpSession session) {
 		byte[] content = bytes(file);
-		var uploaded = taskCreateService.upload(token(session), currentProject.resolve(session),
+		var uploaded = taskCreateService.upload(tokens.require(session), currentProject.resolve(session),
 				file.getOriginalFilename(), content);
 		return new UploadedTaskFile(uploaded.name(), uploaded.markdown());
 	}
@@ -101,7 +101,7 @@ public class TaskController {
 	@PostMapping("/tasks/{code}/status")
 	public ResponseEntity<StatusResponse> transition(@PathVariable int code, @RequestBody StatusRequest request,
 			HttpSession session) {
-		TaskStatusService.Transition result = taskStatusService.transition(token(session),
+		TaskStatusService.Transition result = taskStatusService.transition(tokens.require(session),
 				currentProject.resolve(session).getId(), code, request.status());
 		StatusResponse body = new StatusResponse(result.status(), result.stage());
 		HttpStatus http = result.synced() ? HttpStatus.OK : HttpStatus.CONFLICT;
@@ -118,22 +118,6 @@ public class TaskController {
 		catch (java.io.IOException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "附件读不出来。");
 		}
-	}
-
-	private static String token(HttpSession session) {
-		String accessToken = tokenOrNull(session);
-		if (accessToken == null) {
-			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-		}
-		return accessToken;
-	}
-
-	private static String tokenOrNull(HttpSession session) {
-		Object token = session == null ? null : session.getAttribute(AuthController.SESSION_TOKEN);
-		if (!(token instanceof String accessToken) || accessToken.isBlank()) {
-			return null;
-		}
-		return accessToken;
 	}
 
 	public record CreateTask(String title, String kind, java.util.Map<String, String> fields,

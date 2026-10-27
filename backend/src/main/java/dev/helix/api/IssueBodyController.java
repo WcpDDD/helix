@@ -3,6 +3,7 @@ package dev.helix.api;
 import java.util.List;
 
 import dev.helix.auth.AuthController;
+import dev.helix.auth.GitlabSessionToken;
 import dev.helix.board.CurrentProject;
 import dev.helix.board.IssueBodyService;
 import dev.helix.board.ProjectEntity;
@@ -25,32 +26,28 @@ public class IssueBodyController {
 
 	private final CurrentProject currentProject;
 
-	public IssueBodyController(IssueBodyService issueBodyService, CurrentProject currentProject) {
+	private final GitlabSessionToken tokens;
+
+	public IssueBodyController(IssueBodyService issueBodyService, CurrentProject currentProject,
+			GitlabSessionToken tokens) {
 		this.issueBodyService = issueBodyService;
 		this.currentProject = currentProject;
+		this.tokens = tokens;
 	}
 
 	@GetMapping("/{number}/body")
 	public IssueBody body(@PathVariable int number, HttpSession session) {
 		ProjectEntity project = currentProject.resolve(session);
-		return new IssueBody(issueBodyService.body(project, number, token(session)));
+		return new IssueBody(issueBodyService.body(project, number, tokens.require(session)));
 	}
 
 	@GetMapping("/{number}/notes")
 	public IssueNotes notes(@PathVariable int number, HttpSession session) {
 		ProjectEntity project = currentProject.resolve(session);
-		List<IssueNotes.Note> notes = issueBodyService.comments(project, number, token(session)).stream()
+		List<IssueNotes.Note> notes = issueBodyService.comments(project, number, tokens.require(session)).stream()
 				.map(IssueBodyController::note)
 				.toList();
 		return new IssueNotes(notes);
-	}
-
-	private static String token(HttpSession session) {
-		Object token = session == null ? null : session.getAttribute(AuthController.SESSION_TOKEN);
-		if (!(token instanceof String accessToken) || accessToken.isBlank()) {
-			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-		}
-		return accessToken;
 	}
 
 	private static IssueNotes.Note note(GitlabComment comment) {

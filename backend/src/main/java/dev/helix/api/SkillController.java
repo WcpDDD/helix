@@ -3,6 +3,7 @@ package dev.helix.api;
 import java.util.List;
 
 import dev.helix.auth.AuthController;
+import dev.helix.auth.GitlabSessionToken;
 import dev.helix.board.CurrentProject;
 import dev.helix.board.SkillIndex;
 import dev.helix.board.WorkspaceSkillService;
@@ -25,27 +26,22 @@ public class SkillController {
 
 	private final CurrentProject currentProject;
 
-	public SkillController(WorkspaceSkillService skills, CurrentProject currentProject) {
+	private final GitlabSessionToken tokens;
+
+	public SkillController(WorkspaceSkillService skills, CurrentProject currentProject, GitlabSessionToken tokens) {
 		this.skills = skills;
 		this.currentProject = currentProject;
+		this.tokens = tokens;
 	}
 
 	@GetMapping
 	public List<SkillIndex.SkillView> list(HttpSession session) {
-		return skills.list(token(session), currentProject.resolve(session));
+		return skills.list(tokens.require(session), currentProject.resolve(session));
 	}
 
 	@GetMapping("/file")
 	public SkillFile file(@RequestParam String path, HttpSession session) {
-		return skills.file(token(session), currentProject.resolve(session), path);
-	}
-
-	private static String token(HttpSession session) {
-		Object token = session == null ? null : session.getAttribute(AuthController.SESSION_TOKEN);
-		if (!(token instanceof String accessToken) || accessToken.isBlank()) {
-			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
-		}
-		return accessToken;
+		return skills.file(tokens.require(session), currentProject.resolve(session), path);
 	}
 
 }
