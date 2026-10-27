@@ -5,6 +5,8 @@ import jakarta.servlet.http.Cookie;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
+import org.springframework.mock.web.MockHttpSession;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -12,6 +14,8 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -27,6 +31,9 @@ class StoredLoginTest {
 
 	@Autowired
 	private LoginStore logins;
+
+	@Autowired
+	private GitlabSessionToken tokens;
 
 	@Autowired
 	private GitlabLoginRepository repository;
@@ -74,6 +81,20 @@ class StoredLoginTest {
 		GitlabLoginEntity row = repository.findById(id).orElseThrow();
 		assertThat(row.getAccessToken()).isEqualTo("new-access");
 		assertThat(row.getRefreshToken()).isEqualTo("new-refresh");
+	}
+
+	@Test
+	void requireUsesTheStoredTokenWhenTheSessionStillHasTheOldOne() {
+		String id = logins.save(login("fresh-access", "fresh-refresh", System.currentTimeMillis() + 3_600_000));
+		MockHttpSession session = new MockHttpSession();
+		session.setAttribute(AuthController.SESSION_LOGIN, id);
+		session.setAttribute(AuthController.SESSION_TOKEN, "stale-access");
+		session.setAttribute(AuthController.SESSION_REFRESH, "stale-refresh");
+		session.setAttribute(AuthController.SESSION_EXPIRES, System.currentTimeMillis() + 3_600_000);
+
+		assertThat(tokens.require(session)).isEqualTo("fresh-access");
+		assertThat(session.getAttribute(AuthController.SESSION_REFRESH)).isEqualTo("fresh-refresh");
+		verify(oauth, never()).refresh("stale-refresh");
 	}
 
 	private static GitlabLogin login(String accessToken, String refreshToken, long expiresAt) {
