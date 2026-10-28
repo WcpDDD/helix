@@ -114,7 +114,7 @@ public final class WorkerGuide {
 				1. 开始之前，拉取这张 issue 的最新描述和全部评论。最新评论是这一步的输入，不要只看描述。评论里点到你这一步的问题，先处理再动手。
 				2. 根据拉到的描述和最新评论规划自己这一步的行动。
 				3. 写文件只能写在这个工作区里面。/tmp 和工作区外的路径会被拒绝，bash 可以但工具不行。草稿写在仓库根的 scratch/ 下，用完删掉。
-				4. toolchain 的工具在 ~/.helix/toolchain/bin，环境变量里有 JAVA8_HOME、JAVA21_HOME、BDDGEN、PLAYWRIGHT、OPENSPEC、PNPM、UV。要用先查环境变量，toolchain 里有的命令不要自己另装一份，也不要 npm install -g。缺什么如实写进希望处理的问题。
+				4. toolchain 的工具在 ~/.helix/toolchain/bin，环境变量里有 JAVA8_HOME、JAVA21_HOME、BDDGEN、PLAYWRIGHT、OPENSPEC、PNPM、UV。kubectl 已配好，能只读摸测试集群。要用先查环境变量，toolchain 里有的命令不要自己另装一份，也不要 npm install -g。缺什么如实写进希望处理的问题。
 				5. 不要跑 find /、find ~ 这类全盘搜索，会超时。在仓和工作区范围内定向找。
 				6. 每完成一个完整单元就立刻 commit 并 push：实现改完提交实现，文档写完提交文档。不要把提交攒到轮末，轮次可能被中断，没提交的工作会丢。
 				7. 本机要跑的检查，先按这个仓自己的方式装上依赖再跑。刚 clone 的仓没有 node_modules、虚拟环境或构建产物时，本机已经有仓要求的运行时，就直接安装。安装慢、要内部源，继续装。装完跑这次改动对应的测试或类型检查，把命令和结果写进工作记录。装不上或跑失败，把命令和完整报错写进工作记录，停在这一步。不要写成本地没有环境、改由 CI 代替，也不要用读代码代替跑过。跑不起来、行为不对时，按 `skills/dev-debug/SKILL.md` 的方法定位；要部署分支环境实测，按 `skills/dev-env-deploy/SKILL.md` 搭。
