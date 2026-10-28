@@ -454,6 +454,62 @@ function readFailure(error: unknown): 'login' | 'error' {
   return error instanceof Error && error.name === 'IssueReadAuthError' ? 'login' : 'error'
 }
 
+let issueTimer = 0
+let rosterTimer = 0
+let rosterPollRequest = 0
+
+function notesSignature(list: Array<{ id: number; createdAt: string; body: string }>): string {
+  return list.map((note) => `${note.id}:${note.createdAt}:${note.body.length}`).join('|')
+}
+
+async function pollIssue() {
+  if (document.hidden || pane.value !== 'issue') return
+  const id = issueView.value.id
+  try {
+    const [text, notes] = await Promise.all([fetchIssueBody(id), fetchIssueNotes(id)])
+    if (id !== issueView.value.id) return
+    if (text !== issueBody.value) {
+      issueBody.value = text
+      issueBodyState.value = text ? 'ready' : 'empty'
+    }
+    const mapped: Array<IssueNote & { html: string; time: string }> = notes.map((note) => ({
+      ...note,
+      html: renderMarkdown(note.body),
+      time: commentTime(note.createdAt),
+    }))
+    if (notesSignature(mapped) !== notesSignature(issueNotes.value)) issueNotes.value = mapped
+  }
+  catch {
+    // 静默，下一轮再试
+  }
+}
+
+async function pollRoster() {
+  if (document.hidden || pane.value !== 'agent') return
+  const id = issueView.value.id
+  const request = ++rosterPollRequest
+  try {
+    const next = await fetchIssueAgents(id)
+    if (request !== rosterPollRequest || id !== issueView.value.id) return
+    const shape = (list: IssueAgent[]) =>
+      list.map((seat) => [seat.agentId, seat.assigned, seat.alive, seat.workerId].join(':')).join('|')
+    if (shape(next) !== shape(seats.value)) seats.value = next
+    if (focusAgent.value === 'group' || threadState.value !== 'ready') return
+    const seat = currentSeat.value
+    if (!seat?.assigned || !seat.alive) return
+    const page = await fetchAgentConversations(id, seat.agentId)
+    if (request !== rosterPollRequest || id !== issueView.value.id) return
+    const last = page.messages[page.messages.length - 1]
+    if (!last || last.status !== 'running') return
+    const loaded = messages.value.filter((message) => message.agentId === seat.agentId)
+    const loadedSeq = loaded.length > 0 ? loaded[loaded.length - 1].seq : 0
+    if (last.seq > loadedSeq) void loadView(id)
+  }
+  catch {
+    // 静默，下一轮再试
+  }
+}
+
 function commentTime(iso: string): string {
   const date = new Date(iso)
   if (Number.isNaN(date.getTime())) return iso
@@ -886,6 +942,8 @@ async function openAttachment(path: string | undefined, agentId: number) {
 
 onMounted(() => {
   window.addEventListener('keydown', onKeydown)
+  issueTimer = window.setInterval(() => void pollIssue(), 12000)
+  rosterTimer = window.setInterval(() => void pollRoster(), 6000)
   if (goalText.value) {
     void resumeGoal(goalText.value)
     return
@@ -895,6 +953,8 @@ onMounted(() => {
 onUnmounted(() => {
   closeStream()
   stopGoalPoll()
+  window.clearInterval(issueTimer)
+  window.clearInterval(rosterTimer)
   window.clearTimeout(localAgentTimer)
   window.removeEventListener('keydown', onKeydown)
 })

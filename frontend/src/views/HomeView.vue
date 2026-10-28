@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, provide, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import TaskCreate from '@/components/TaskCreate.vue'
 import TaskDetail from '@/components/TaskDetail.vue'
@@ -89,6 +89,17 @@ async function reloadBoard() {
   tasks.value = await fetchTasks()
   rememberPeople(tasks.value)
 }
+
+let boardTimer = 0
+
+onMounted(() => {
+  boardTimer = window.setInterval(() => {
+    if (document.hidden || creating.value) return
+    void reloadBoard()
+  }, 8000)
+})
+
+onUnmounted(() => window.clearInterval(boardTimer))
 
 function countOf(name: StageFilter): number {
   if (name === '已关闭') return board.value.filter((task) => task.status === '已关闭').length
