@@ -975,13 +975,13 @@ onUnmounted(() => {
           </div>
           <button type="button" class="hitl-toggle" @click="hitlCollapsed = true">收起</button>
         </div>
-        <p class="hitl-lead">manager 停在这里。写下你的决定。确认并继续会摘掉 ai/hitl，重新交给 manager。</p>
+        <p class="hitl-lead">写下你的决定；确认并继续会摘掉 ai/hitl，交回 manager。</p>
         <p v-if="hitlReason" class="hitl-reason">{{ hitlReason }}</p>
         <p v-else-if="latestNote" class="hitl-reason">{{ latestNote.body }}</p>
         <p v-else class="hitl-empty">这张 issue 上还没有评论。决定写在下面。</p>
         <label class="hitl-field">
           <span>你的决定</span>
-          <textarea v-model="hitlDraft" rows="3" placeholder="按提案继续" />
+          <textarea v-model="hitlDraft" rows="2" placeholder="按提案继续" />
         </label>
         <p v-if="hitlError" class="goal-error">{{ hitlError }}</p>
         <div class="hitl-actions">
@@ -2302,10 +2302,10 @@ textarea {
 .hitl-panel {
   flex-shrink: 0;
   margin: 0;
-  padding: 16px 22px 18px;
+  padding: 12px 22px 12px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
-  max-height: 55vh;
+  max-height: 42vh;
   overflow-y: auto;
 }
 
@@ -2363,27 +2363,27 @@ textarea {
 }
 
 .hitl-panel h3 {
-  margin: 0 0 6px;
-  font-size: 18px;
+  margin: 0 0 4px;
+  font-size: 15px;
 }
 
 .hitl-lead,
 .hitl-empty {
-  margin: 0 0 10px;
+  margin: 0 0 6px;
   color: var(--muted, #5c6570);
-  font-size: 14px;
+  font-size: 12.5px;
 }
 
 .hitl-reason {
-  max-height: 28vh;
+  max-height: 132px;
   overflow: auto;
-  margin: 0 0 12px;
-  padding: 10px 12px;
+  margin: 0 0 10px;
+  padding: 8px 10px;
   border-radius: 10px;
   background: var(--surface);
   white-space: pre-wrap;
-  font-size: 14px;
-  line-height: 1.5;
+  font-size: 12.5px;
+  line-height: 1.45;
 }
 
 .hitl-field {
