@@ -62,14 +62,14 @@ public final class WorkerProcess {
 				下面就是这一轮的打法。按「目标」和「调度其他 Agent」行事。
 				这次只是叫醒你。issue 自己去拉。不要列目录，也不要到工作区文件里找这套打法。
 				这次启用的 skill 以 installed 清单为准，任务没点名的也可以用；派单只指路，不是启用面。
-				已经安装的外部资产列在 installed 里，按那里写下的路径使用。toolchain 的工具在 ~/.helix/toolchain/bin，环境变量 JAVA8_HOME、JAVA21_HOME、BDDGEN、PLAYWRIGHT、OPENSPEC、PNPM、UV 先查再用，缺什么如实写进希望处理的问题。
+				已经安装的外部资产列在 installed 里，按那里写下的路径使用。环境里有什么、在哪、怎么用，读工作区根的 ENVIRONMENT.md。
 				""" : """
 				你在这张 issue 独享的工作区里。
 				下面就是这一轮的打法。按「工作方式」行事。
 				不要调度其他角色，也不要改 issue 阶段。
 				不要到工作区文件里找这套打法。
 				这次启用的 skill 以 installed 清单为准，任务没点名的也可以用；派单只指路，不是启用面。
-				已经安装的外部资产列在 installed 里，按那里写下的路径使用。toolchain 的工具在 ~/.helix/toolchain/bin，环境变量 JAVA8_HOME、JAVA21_HOME、BDDGEN、PLAYWRIGHT、OPENSPEC、PNPM、UV 先查再用，缺什么如实写进希望处理的问题。
+				已经安装的外部资产列在 installed 里，按那里写下的路径使用。环境里有什么、在哪、怎么用，读工作区根的 ENVIRONMENT.md。
 				""";
 		String body = agentBody == null || agentBody.isBlank() ? "" : "\n# 这个 Agent 的定义\n\n按这份定义行事。\n\n" + agentBody.strip() + "\n";
 		return base + "\n" + play + body;

@@ -202,8 +202,9 @@ class WorkerSessionsTest {
 				.contains("/api/workers/worker-local/issues/21/agents/{agent}/tasks")
 				.doesNotContain("# 工作方式");
 		assertThat(WorkerGuide.worker(21, "http://127.0.0.1:8080", "worker-local")).contains("无法自决时立刻停")
-				.contains("先按这个仓自己的方式装上依赖再跑").contains("不要写成本地没有环境")
-				.contains("最新评论是这一步的输入").contains("每一轮结束前都要在这张 issue 上留一条评论")
+				.contains("先查再问").contains("读工作区根的 ENVIRONMENT.md")
+				.contains("工作区可以重建").contains("不要把「环境不具备」当结论")
+				.contains("每一轮结束前都要在这张 issue 上留一条评论")
 				.contains("GET http://127.0.0.1:8080/api/workers/worker-local/issues/21")
 				.contains("POST http://127.0.0.1:8080/api/workers/worker-local/issues/21/comments")
 				.doesNotContain("调度其他 Agent").doesNotContain("/issues/21/hitl").doesNotContain("/tasks");
