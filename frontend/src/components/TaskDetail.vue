@@ -40,6 +40,7 @@ const hitlBusy = ref(false)
 const hitlError = ref('')
 const hitlReason = ref('')
 const hitlCleared = ref(false)
+const hitlCollapsed = ref(false)
 let goalTimer = 0
 const showHitl = computed(() => props.task.hitl && !hitlCleared.value)
 const seats = ref<IssueAgent[]>([])
@@ -311,6 +312,7 @@ watch(
   (waiting) => {
     if (!waiting) return
     hitlCleared.value = false
+    hitlCollapsed.value = false
     void loadHitlReason()
   },
   { immediate: true },
@@ -959,22 +961,34 @@ onUnmounted(() => {
       </div>
     </header>
 
-    <section v-if="showHitl" class="hitl-panel" aria-label="待确认">
-      <p class="hitl-kicker">待确认</p>
-      <h3>交给你确认</h3>
-      <p class="hitl-lead">manager 停在这里。写下你的决定。确认并继续会摘掉 ai/hitl，重新交给 manager。</p>
-      <p v-if="hitlReason" class="hitl-reason">{{ hitlReason }}</p>
-      <p v-else-if="latestNote" class="hitl-reason">{{ latestNote.body }}</p>
-      <p v-else class="hitl-empty">这张 issue 上还没有评论。决定写在下面。</p>
-      <label class="hitl-field">
-        <span>你的决定</span>
-        <textarea v-model="hitlDraft" rows="4" placeholder="按提案继续" />
-      </label>
-      <p v-if="hitlError" class="goal-error">{{ hitlError }}</p>
-      <div class="hitl-actions">
-        <button type="button" class="hitl-go" :disabled="hitlBusy" @click="submitHitl">确认并继续</button>
-        <button type="button" class="hitl-stop" :disabled="hitlBusy" @click="dismissHitl">结束确认</button>
-      </div>
+    <section v-if="showHitl" class="hitl-panel" :class="{ folded: hitlCollapsed }" aria-label="待确认">
+      <template v-if="hitlCollapsed">
+        <p class="hitl-kicker">待确认</p>
+        <p class="hitl-bar">manager 停在这里，需要你的决定。</p>
+        <button type="button" class="hitl-toggle" @click="hitlCollapsed = false">展开</button>
+      </template>
+      <template v-else>
+        <div class="hitl-head">
+          <div>
+            <p class="hitl-kicker">待确认</p>
+            <h3>交给你确认</h3>
+          </div>
+          <button type="button" class="hitl-toggle" @click="hitlCollapsed = true">收起</button>
+        </div>
+        <p class="hitl-lead">manager 停在这里。写下你的决定。确认并继续会摘掉 ai/hitl，重新交给 manager。</p>
+        <p v-if="hitlReason" class="hitl-reason">{{ hitlReason }}</p>
+        <p v-else-if="latestNote" class="hitl-reason">{{ latestNote.body }}</p>
+        <p v-else class="hitl-empty">这张 issue 上还没有评论。决定写在下面。</p>
+        <label class="hitl-field">
+          <span>你的决定</span>
+          <textarea v-model="hitlDraft" rows="3" placeholder="按提案继续" />
+        </label>
+        <p v-if="hitlError" class="goal-error">{{ hitlError }}</p>
+        <div class="hitl-actions">
+          <button type="button" class="hitl-go" :disabled="hitlBusy" @click="submitHitl">确认并继续</button>
+          <button type="button" class="hitl-stop" :disabled="hitlBusy" @click="dismissHitl">结束确认</button>
+        </div>
+      </template>
     </section>
 
     <div v-if="pane === 'issue'" ref="bodyEl" class="detail-body">
@@ -2291,6 +2305,54 @@ textarea {
   padding: 16px 22px 18px;
   border-bottom: 1px solid var(--line);
   background: color-mix(in srgb, var(--accent) 8%, var(--surface));
+  max-height: 55vh;
+  overflow-y: auto;
+}
+
+.hitl-panel.folded {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-height: none;
+  overflow: visible;
+  padding: 10px 22px;
+}
+
+.hitl-panel.folded .hitl-kicker {
+  margin: 0;
+}
+
+.hitl-bar {
+  margin: 0;
+  flex: 1;
+  font-size: 13px;
+}
+
+.hitl-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.hitl-head .hitl-kicker {
+  margin: 0 0 4px;
+}
+
+.hitl-head h3 {
+  margin: 0;
+}
+
+.hitl-toggle {
+  flex-shrink: 0;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
 }
 
 .hitl-kicker {
@@ -2313,7 +2375,7 @@ textarea {
 }
 
 .hitl-reason {
-  max-height: 160px;
+  max-height: 28vh;
   overflow: auto;
   margin: 0 0 12px;
   padding: 10px 12px;
