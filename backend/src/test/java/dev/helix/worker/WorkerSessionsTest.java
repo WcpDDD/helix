@@ -191,7 +191,7 @@ class WorkerSessionsTest {
 				.contains("评论是说法，mrs 是事实").contains("每一轮的第一件事")
 				.contains("引用决定它的那一行原文").contains("不算引用")
 				.contains("每一条在下一轮都要写出去向").contains("数过就放下不算处理")
-				.contains("派单只指路").contains("不许写进派单当成已定")
+				.contains("派单只写三样").contains("按描述匹配是它的机制")
 				.contains("理由必须带这一轮核对到的证据")
 				.contains("去读它的对话原文，不要猜")
 				.contains("labels、comments 和 mrs")
