@@ -20,7 +20,7 @@ export default defineConfig({
     port: 5174,
     proxy: {
       '/api': {
-        target: 'http://127.0.0.1:8080',
+        target: 'http://127.0.0.1:8081',
         timeout: 0,
         proxyTimeout: 0,
         configure: (proxy) => {
