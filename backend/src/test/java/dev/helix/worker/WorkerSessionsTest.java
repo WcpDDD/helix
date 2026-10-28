@@ -181,6 +181,8 @@ class WorkerSessionsTest {
 				.contains("交给人确认时，打上 ai/hitl，并摘掉 ai/managed")
 				.doesNotContain("agents.md 里").doesNotContain("# 工作方式");
 		assertThat(WorkerGuide.markdown(21, "http://127.0.0.1:8080", "worker-local")).contains("做到测试通过").contains("一轮只派一个")
+				.contains("方案写完先过闸").contains("任一成立就停，交给人确认")
+				.contains("哪条问题没有去向，这一轮先把它的去向补上再继续")
 				.contains("自己拉取这张 issue").contains("摘掉 ai/managed")
 				.contains("你是被定期唤起的").contains("没有人机协同的要求").contains("没有 agent 正在工作")
 				.contains("流程规范").contains("references/deliverables.md").contains("当前 agent 的执行结果")
