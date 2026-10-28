@@ -386,7 +386,7 @@ public class ProjectWorkspaces {
 			args.add(remote);
 			args.add(staging.getFileName().toString());
 			run(parent, token, args.toArray(String[]::new));
-			run(staging, token, "sparse-checkout", "set", "skills", "openspec", "worker-init");
+			run(staging, token, "sparse-checkout", "set", "skills", "openspec", "worker-init", "docs");
 			if (Files.exists(directory)) {
 				throw new ResponseStatusException(HttpStatus.CONFLICT, "工作目录已经存在，但还不是仓库。");
 			}
