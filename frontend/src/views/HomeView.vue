@@ -91,6 +91,21 @@ async function reloadBoard() {
 }
 
 let boardTimer = 0
+const refreshing = ref(false)
+
+async function manualRefresh() {
+  if (refreshing.value) return
+  refreshing.value = true
+  try {
+    await reloadBoard()
+  }
+  catch {
+    // 保持现有数据，不因刷新失败清空
+  }
+  finally {
+    refreshing.value = false
+  }
+}
 
 onMounted(() => {
   boardTimer = window.setInterval(() => {
@@ -123,6 +138,7 @@ function isOverdue(task: Task): boolean {
       <div class="title">
         <h1>任务</h1>
         <button type="button" class="create" @click="creating = true">创建任务</button>
+        <button type="button" class="refresh" :disabled="refreshing" @click="manualRefresh">{{ refreshing ? '刷新中…' : '刷新' }}</button>
       </div>
       <div class="filters" role="tablist" aria-label="按阶段筛选">
         <button
@@ -320,6 +336,21 @@ h1 {
   background: var(--accent);
   color: white;
   cursor: pointer;
+}
+
+.refresh {
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 8px 14px;
+  background: var(--surface);
+  color: var(--ink);
+  cursor: pointer;
+  font-size: 13px;
+}
+
+.refresh:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .filters {

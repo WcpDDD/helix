@@ -484,6 +484,41 @@ async function pollIssue() {
   }
 }
 
+const detailRefreshing = ref(false)
+
+async function refreshDetailData() {
+  if (detailRefreshing.value) return
+  detailRefreshing.value = true
+  try {
+    const id = issueView.value.id
+    // 正文和评论
+    const [text, notes] = await Promise.all([fetchIssueBody(id), fetchIssueNotes(id)])
+    if (id === issueView.value.id) {
+      issueBody.value = text
+      issueBodyState.value = text ? 'ready' : 'empty'
+      issueNotes.value = notes.map((note) => ({
+        ...note,
+        html: renderMarkdown(note.body),
+        time: commentTime(note.createdAt),
+      }))
+      issueNotesState.value = notes.length > 0 ? 'ready' : 'empty'
+    }
+    // 席位
+    const agents = await fetchIssueAgents(props.task.code)
+    seats.value = agents
+    // 目标
+    void refreshOpenGoal()
+    // 通知父组件刷新列表
+    emit('refresh')
+  }
+  catch {
+    // 刷新失败保持现有数据
+  }
+  finally {
+    detailRefreshing.value = false
+  }
+}
+
 async function pollRoster() {
   if (document.hidden || pane.value !== 'agent') return
   const id = issueView.value.id
@@ -968,6 +1003,9 @@ onUnmounted(() => {
         <span class="code">#{{ task.code }}</span>
         <button type="button" class="local-agent" @click="copyLocalAgentPrompt">
           {{ localAgentCopied ? '已复制' : '本地Agent继续' }}
+        </button>
+        <button type="button" class="refresh-detail" :disabled="detailRefreshing" @click="refreshDetailData">
+          {{ detailRefreshing ? '刷新中…' : '刷新' }}
         </button>
       </div>
       <h2 id="task-detail-title">{{ task.description }}</h2>
@@ -2672,6 +2710,23 @@ textarea {
   font-weight: 500;
   background: transparent;
   cursor: pointer;
+}
+
+.refresh-detail {
+  border: 1px solid var(--line);
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  background: transparent;
+  cursor: pointer;
+  padding: 6px 14px;
+  border-radius: 999px;
+}
+
+.refresh-detail:disabled {
+  opacity: 0.45;
+  cursor: default;
 }
 
 .next-panel {
