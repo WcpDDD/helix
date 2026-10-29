@@ -40,6 +40,10 @@
   margin-bottom: 36px;
 }
 
+.shell:has(.home) .topbar {
+  margin-bottom: 12px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -122,6 +126,13 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.project-create {
+  padding: 6px 0;
+  color: var(--accent);
+  font-size: 14px;
+  font-weight: 650;
 }
 
 .project-current::after {

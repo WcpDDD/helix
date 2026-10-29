@@ -1,12 +1,15 @@
 package dev.helix.agentkit;
 
 import java.io.IOException;
+import java.net.URI;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -19,16 +22,21 @@ import io.agentkit.api.execution.ExecutionChunk;
 import io.agentkit.api.execution.ExecutionEvent;
 import io.agentkit.api.execution.ExecutionRejectedException;
 import io.agentkit.api.execution.Task;
+import io.agentkit.api.execution.TaskFile;
 import io.agentkit.api.execution.WorkspaceOpening;
 import io.agentkit.api.react.ReActConstructor;
+import io.agentkit.api.react.ToolFacade;
 import io.agentkit.api.session.SessionStorage;
+import io.agentkit.api.store.PublicUrlIssuer;
+import io.agentkit.api.store.Store;
 import io.agentkit.execution.assembly.AssetInstalling;
 import io.agentkit.execution.env.local.LocalFsEnvProvider;
 import io.agentkit.execution.facade.ExecutionFacade;
-import io.agentkit.execution.meta.BuiltinToolFace;
-import io.agentkit.execution.meta.EnvPrimitiveTools;
+import io.agentkit.execution.meta.ParseAttachmentTools;
 import io.agentkit.execution.react.DefaultReActConstructor;
 import io.agentkit.execution.session.DefaultSessionService;
+import io.agentkit.api.llm.LLMBackend;
+import io.agentkit.infra.llm.ConfiguredModels;
 import io.agentkit.infra.llm.OpenAICompatibleBackend;
 import io.agentkit.infra.llm.OpenAICompatibleConfig;
 import io.agentkit.infra.llm.RoutingProvider;
@@ -48,6 +56,10 @@ public class AgentKitRuntime {
 
 	private final Map<String, Bound> sessions = new ConcurrentHashMap<>();
 
+	private final Supplier<Store> attachments;
+
+	private final ToolFacade tools;
+
 	private volatile ExternalAssets assets;
 
 	public AgentKitRuntime(AgentKitProperties properties) {
@@ -55,8 +67,18 @@ public class AgentKitRuntime {
 	}
 
 	public AgentKitRuntime(AgentKitProperties properties, Path memory) {
+		this(properties, memory, () -> null);
+	}
+
+	public AgentKitRuntime(AgentKitProperties properties, Path memory, Supplier<Store> attachments) {
+		this(properties, memory, attachments, null);
+	}
+
+	public AgentKitRuntime(AgentKitProperties properties, Path memory, Supplier<Store> attachments, ToolFacade tools) {
 		this.properties = properties;
 		this.memory = SessionMemory.open(memory);
+		this.attachments = attachments == null ? () -> null : attachments;
+		this.tools = tools;
 	}
 
 	public RunResult execute(String systemPrompt, String callerId, String message, Path workspace) {
@@ -65,7 +87,18 @@ public class AgentKitRuntime {
 
 	public RunResult execute(String systemPrompt, String callerId, String message, Path workspace,
 			Map<String, String> userEnv) {
-		Started started = launch(systemPrompt, callerId, message, workspace, userEnv);
+		return execute(systemPrompt, callerId, message, workspace, userEnv, List.of());
+	}
+
+	public RunResult execute(String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv, List<String> skills) {
+		return execute(systemPrompt, callerId, message, workspace, userEnv, skills, List.of());
+	}
+
+	public RunResult execute(String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv, List<String> skills, List<URI> files) {
+		Started started = launch(null, systemPrompt, callerId, message, workspace, userEnv, null, "", skills,
+				files == null ? List.of() : files);
 		try {
 			ExecutionEvent.RunEnded ended = started.done().get();
 			return new RunResult(started.threadId(), ended.phase().name(), ended.assistantText(), ended.failureMessage());
@@ -99,7 +132,17 @@ public class AgentKitRuntime {
 
 	public void begin(String threadId, String systemPrompt, String callerId, String message, Path workspace,
 			Map<String, String> userEnv, RunSink sink, String agentsMd, List<String> skills) {
-		Started started = launch(threadId, systemPrompt, callerId, message, workspace, userEnv, sink, agentsMd, skills);
+		begin(threadId, systemPrompt, callerId, message, workspace, userEnv, sink, agentsMd, skills, List.<URI>of());
+	}
+
+	public void begin(String threadId, String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv, RunSink sink, List<URI> files) {
+		begin(threadId, systemPrompt, callerId, message, workspace, userEnv, sink, "", List.<String>of(), files);
+	}
+
+	public void begin(String threadId, String systemPrompt, String callerId, String message, Path workspace,
+			Map<String, String> userEnv, RunSink sink, String agentsMd, List<String> skills, List<URI> files) {
+		Started started = launch(threadId, systemPrompt, callerId, message, workspace, userEnv, sink, agentsMd, skills, files);
 		Thread thread = new Thread(() -> await(started, sink), "helix-worker-run");
 		thread.setDaemon(true);
 		thread.start();
@@ -136,11 +179,11 @@ public class AgentKitRuntime {
 
 	private Started launch(String systemPrompt, String callerId, String message, Path workspace,
 			Map<String, String> userEnv) {
-		return launch(null, systemPrompt, callerId, message, workspace, userEnv, null, "", List.of());
+		return launch(null, systemPrompt, callerId, message, workspace, userEnv, null, "", List.<String>of(), List.<URI>of());
 	}
 
 	private Started launch(String requestedThread, String systemPrompt, String callerId, String message, Path workspace,
-			Map<String, String> userEnv, RunSink sink, String agentsMd, List<String> skills) {
+			Map<String, String> userEnv, RunSink sink, String agentsMd, List<String> skills, List<URI> files) {
 		if (!properties.ready()) {
 			throw new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "AGENTKIT_MODEL 和 AGENTKIT_API_KEY 还没配。");
 		}
@@ -173,7 +216,7 @@ public class AgentKitRuntime {
 			}
 			bound.execution().submit(caller, new Task(
 					threadId, taskId, prompt,
-					null, null, null, enabled(skills), null, extra,
+					taskFiles(files), null, null, enabled(skills), null, extra,
 					properties.turns(), null, null, opening));
 			watch(bound.execution(), caller, threadId, done, sink);
 			return new Started(threadId, done, bound.execution());
@@ -181,6 +224,19 @@ public class AgentKitRuntime {
 		catch (ExecutionRejectedException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, exception.getMessage());
 		}
+	}
+
+	private static List<TaskFile> taskFiles(List<URI> files) {
+		if (files == null || files.isEmpty()) {
+			return List.of();
+		}
+		List<TaskFile> taskFiles = new ArrayList<>();
+		for (URI file : files) {
+			if (file != null) {
+				taskFiles.add(new TaskFile(file));
+			}
+		}
+		return taskFiles;
 	}
 
 	private static List<String> enabled(List<String> skills) {
@@ -223,17 +279,43 @@ public class AgentKitRuntime {
 		String baseUrl = properties.baseUrl() == null || properties.baseUrl().isBlank()
 				? "https://api.openai.com/v1"
 				: properties.baseUrl().strip();
-		StaticLLMConfigProvider llmConfig = new StaticLLMConfigProvider(new OpenAICompatibleConfig(
-				"openai_compatible", baseUrl, properties.apiKey().strip(), Set.of(), 0, 0, 0, 0));
-		RoutingProvider llm = new RoutingProvider(List.of(
-				new TencentMaasBackend(llmConfig),
-				new OpenAICompatibleBackend(llmConfig)));
-		ReActConstructor constructor = new DefaultReActConstructor(llm,
-				BuiltinToolFace.compose(llm, null, null, null, () -> properties.model().strip()), List.of());
+		Map<String, String> models = new LinkedHashMap<>();
+		models.put(ConfiguredModels.MODEL, properties.model().strip());
+		models.put(ConfiguredModels.API_KEY, properties.apiKey().strip());
+		models.put(ConfiguredModels.BASE_URL, baseUrl);
+		if (properties.visionModel() != null && !properties.visionModel().isBlank()) {
+			models.put("AGENTKIT_VL_MODEL", properties.visionModel().strip());
+			models.put("AGENTKIT_VL_VISION", "true");
+			models.put("AGENTKIT_VL_FILE_TYPES", "png,jpeg,jpg,webp,gif");
+		}
+		ConfiguredModels.Plan plan = ConfiguredModels.plan(models, baseUrl, 8192, 65536);
+		List<LLMBackend> backends = new ArrayList<>();
+		for (ConfiguredModels.Endpoint endpoint : plan.front()) {
+			StaticLLMConfigProvider provider = provider(endpoint);
+			if (endpoint.tencent()) {
+				backends.add(new TencentMaasBackend(provider));
+			}
+			else {
+				backends.add(new OpenAICompatibleBackend(provider, false));
+			}
+		}
+		backends.add(new OpenAICompatibleBackend(provider(plan.fallback()), true));
+		RoutingProvider llm = new RoutingProvider(backends);
+		Store store = attachments.get();
+		PublicUrlIssuer issuer = store instanceof PublicUrlIssuer signing ? signing : null;
+		ToolFacade face = tools != null ? tools
+				: ParseAttachmentTools.compose(llm, store, issuer, "files", () -> properties.model().strip());
+		ReActConstructor constructor = new DefaultReActConstructor(llm, face, List.of());
 		DefaultSessionService service = new DefaultSessionService(
 				memory, constructor, properties.model().strip(), systemPrompt, properties.turns(),
 				new LocalFsEnvProvider(), assets().mounting(), new AssetInstalling());
 		return new Bound(systemPrompt, new ExecutionFacade(service), service);
+	}
+
+	private static StaticLLMConfigProvider provider(ConfiguredModels.Endpoint endpoint) {
+		return new StaticLLMConfigProvider(new OpenAICompatibleConfig(
+				"openai_compatible", endpoint.baseUrl(), endpoint.apiKey(), Set.copyOf(endpoint.models()),
+				0, 65536, 0, 0));
 	}
 
 	private ExternalAssets assets() {

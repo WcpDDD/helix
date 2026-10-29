@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { fetchGitlabProjects, saveProject, type GitlabProject } from '@/api/client'
 import { useProjectStore } from '@/stores/projects'
+
+const route = useRoute()
+const router = useRouter()
 
 const projects = useProjectStore()
 const drafting = ref(false)
@@ -16,6 +20,7 @@ const saveError = ref('')
 const saved = ref(false)
 const saving = ref(false)
 const listing = ref(false)
+const creatingPath = ref('')
 let searchTimer: ReturnType<typeof setTimeout> | undefined
 
 watch(
@@ -40,11 +45,18 @@ onMounted(async () => {
     }
   }
   ready.value = true
-  if (!projects.current && !loadError.value && projects.projects.length === 0) {
-    loadError.value = '项目没有读到。'
+  if (route.query.new === '1' || projects.projects.length === 0) {
+    openCreate()
   }
   await loadChoices('')
 })
+
+watch(
+  () => route.query.new,
+  (value) => {
+    if (value === '1') openCreate()
+  },
+)
 
 onUnmounted(() => {
   if (searchTimer) clearTimeout(searchTimer)
@@ -62,9 +74,9 @@ async function loadChoices(search: string) {
   listError.value = ''
   try {
     choices.value = await fetchGitlabProjects(search)
-  } catch {
+  } catch (error) {
     choices.value = []
-    listError.value = 'GitLab 工程没有读到。'
+    listError.value = error instanceof Error ? error.message : 'GitLab 仓库没有读到。'
   } finally {
     listing.value = false
   }
@@ -77,12 +89,48 @@ function pick(choice: GitlabProject) {
   saveError.value = ''
 }
 
-function startDraft() {
+function linked(path: string) {
+  return projects.projects.find((item) => item.workspace.path === path)
+}
+
+function choiceLabel(choice: GitlabProject): string {
+  if (creatingPath.value === choice.path) return '正在接入'
+  if (linked(choice.path)) return '已接入'
+  return choice.name
+}
+
+function openCreate() {
   drafting.value = true
   name.value = ''
   path.value = ''
   saved.value = false
   saveError.value = ''
+  if (route.query.new !== '1') {
+    void router.replace({ name: 'project', query: { new: '1' } })
+  }
+}
+
+async function choose(choice: GitlabProject) {
+  const existing = linked(choice.path)
+  if (existing) {
+    await openProject(existing.id)
+    return
+  }
+  if (creatingPath.value) return
+  creatingPath.value = choice.path
+  saveError.value = ''
+  try {
+    const created = await projects.add(choice.name, choice.path)
+    drafting.value = false
+    name.value = created.name
+    path.value = created.workspace.path
+    saved.value = true
+    if (route.query.new) await router.replace({ name: 'project' })
+  } catch (error) {
+    saveError.value = error instanceof Error ? error.message : '项目没有建起来。'
+  } finally {
+    creatingPath.value = ''
+  }
 }
 
 const syncing = ref(false)
@@ -139,6 +187,7 @@ async function openProject(id: number) {
   drafting.value = false
   saveError.value = ''
   saved.value = false
+  if (route.query.new) await router.replace({ name: 'project' })
   if (id === projects.currentId) {
     const current = projects.current
     if (current) {
@@ -155,7 +204,7 @@ async function openProject(id: number) {
 }
 
 async function save() {
-  if (saving.value || !path.value.trim()) return
+  if (drafting.value || saving.value || !path.value.trim()) return
   saving.value = true
   saveError.value = ''
   saved.value = false
@@ -183,8 +232,9 @@ async function save() {
 <template>
   <main class="project">
     <header class="head">
-      <h1>管理项目</h1>
-      <p>业务读当前项目主分支的工作目录。心跳会把落后的版本拉齐，也可以手动拉取或推送。</p>
+      <h1>{{ drafting ? '新建项目' : '管理项目' }}</h1>
+      <p v-if="drafting">选一个 GitLab 仓库，它就成为这个 Helix 项目。</p>
+      <p v-else>业务读当前项目主分支的工作目录。心跳会把落后的版本拉齐，也可以手动拉取或推送。</p>
     </header>
 
     <p v-if="!ready" class="note">正在读取项目。</p>
@@ -200,13 +250,33 @@ async function save() {
         >
           {{ item.name }}
         </button>
-        <button type="button" :class="{ on: drafting }" @click="startDraft">新建</button>
+        <button type="button" :class="{ on: drafting }" @click="openCreate">新建项目</button>
       </div>
-      <label>
+      <section v-if="drafting" class="create">
+        <h2>GitLab 仓库</h2>
+        <p class="note">这里是你在 GitLab 上参与的仓库。点一个，就把它接成 Helix 项目。</p>
+        <label>
+          搜索
+          <input v-model="query" type="search" placeholder="群组或仓库名" @input="scheduleSearch" />
+        </label>
+        <p v-if="listing" class="note">正在读取 GitLab 仓库。</p>
+        <p v-else-if="listError" class="note">{{ listError }}</p>
+        <p v-else-if="choices.length === 0" class="note">没有匹配的仓库。</p>
+        <ul v-else class="choices">
+          <li v-for="choice in choices" :key="choice.path">
+            <button type="button" :disabled="creatingPath !== ''" @click="choose(choice)">
+              <span>{{ choice.path }}</span>
+              <small>{{ choiceLabel(choice) }}</small>
+            </button>
+          </li>
+        </ul>
+        <p v-if="saveError" class="note">{{ saveError }}</p>
+      </section>
+      <label v-if="!drafting">
         名称
         <input v-model="name" type="text" autocomplete="off" />
       </label>
-      <label>
+      <label v-if="!drafting">
         GitLab 工程
         <input v-model="path" type="text" autocomplete="off" spellcheck="false" placeholder="群组/工程" />
       </label>
@@ -245,13 +315,13 @@ async function save() {
           <p v-else-if="projects.work.push !== 'preparing'" class="note">还没有提交。</p>
         </template>
       </section>
-      <label>
+      <label v-if="!drafting">
         从我参与的工程里选
         <input v-model="query" type="search" placeholder="搜索工程" @input="scheduleSearch" />
       </label>
-      <p v-if="listing" class="note">正在读取 GitLab 工程。</p>
-      <p v-else-if="listError" class="note">{{ listError }}</p>
-      <ul v-else class="choices">
+      <p v-if="!drafting && listing" class="note">正在读取 GitLab 工程。</p>
+      <p v-else-if="!drafting && listError" class="note">{{ listError }}</p>
+      <ul v-else-if="!drafting" class="choices">
         <li v-for="choice in choices" :key="choice.path">
           <button type="button" :class="{ on: choice.path === path }" @click="pick(choice)">
             <span>{{ choice.path }}</span>
@@ -259,9 +329,9 @@ async function save() {
           </button>
         </li>
       </ul>
-      <div class="actions">
+      <div v-if="!drafting" class="actions">
         <button type="submit" class="save" :disabled="saving || !path.trim()">
-          {{ saving ? '正在保存' : drafting ? '建立项目' : '保存工程' }}
+          {{ saving ? '正在保存' : '保存工程' }}
         </button>
         <p v-if="saveError" class="note">{{ saveError }}</p>
         <p v-else-if="saved" class="note ok">工程已保存。</p>
@@ -337,6 +407,7 @@ input {
   color: var(--accent);
 }
 
+.create h2,
 .work h2 {
   margin: 8px 0 0;
   font-size: 16px;
@@ -394,6 +465,11 @@ input {
   color: var(--ink);
   text-align: left;
   cursor: pointer;
+}
+
+.choices button:disabled {
+  cursor: progress;
+  opacity: 0.7;
 }
 
 .choices button.on {

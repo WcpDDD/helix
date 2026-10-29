@@ -105,8 +105,10 @@ onUnmounted(() => {
         <RouterLink to="/collab">协同</RouterLink>
       </nav>
       <div v-if="session.user" class="bar-end">
-        <div v-if="projects.current" ref="switchEl" class="project-switch">
+        <div ref="switchEl" class="project-switch">
+          <RouterLink v-if="!projects.current" class="project-create" :to="{ path: '/project', query: { new: '1' } }">新建项目</RouterLink>
           <button
+            v-else
             type="button"
             class="project-current"
             aria-haspopup="listbox"
@@ -115,10 +117,10 @@ onUnmounted(() => {
           >
             {{ projects.current.name }}
           </button>
-          <span v-if="projects.workLoading" class="work-state">正在读取</span>
-          <span v-else-if="projects.workError" class="work-state">工作目录没准备好</span>
-          <span v-else-if="projects.work" class="work-state">{{ workLabel(projects.work.push, projects.work.ahead, projects.work.behind, projects.work.pushError) }}</span>
-          <ul v-if="menuOpen" class="project-menu" role="listbox">
+          <span v-if="projects.current && projects.workLoading" class="work-state">正在读取</span>
+          <span v-else-if="projects.current && projects.workError" class="work-state">工作目录没准备好</span>
+          <span v-else-if="projects.current && projects.work" class="work-state">{{ workLabel(projects.work.push, projects.work.ahead, projects.work.behind, projects.work.pushError) }}</span>
+          <ul v-if="projects.current && menuOpen" class="project-menu" role="listbox">
             <li v-for="item in projects.projects" :key="item.id">
               <button
                 type="button"
@@ -131,6 +133,7 @@ onUnmounted(() => {
               </button>
             </li>
             <li class="project-manage">
+              <RouterLink :to="{ path: '/project', query: { new: '1' } }" @click="menuOpen = false">新建项目</RouterLink>
               <RouterLink to="/project" @click="menuOpen = false">管理项目</RouterLink>
             </li>
           </ul>

@@ -35,6 +35,88 @@ export function fetchCurrentProject(): Promise<Project> {
   return getJson<Project>('/api/projects/current')
 }
 
+export interface HomeAgentFile {
+  name: string
+  url: string
+}
+
+export interface HomeAgentTool {
+  id: string
+  name: string
+  arguments: string
+  observation: string
+  status: string
+}
+
+export interface HomeAgentMessage {
+  id: string
+  role: 'user' | 'assistant'
+  status: string
+  text: string
+  reasoning: string
+  tools: HomeAgentTool[]
+  files: HomeAgentFile[]
+  at: string
+}
+
+export interface HomeSessionItem {
+  id: string
+  title: string
+  at: string
+  current: boolean
+}
+
+export interface HomeAgent {
+  workspace: string
+  preparing: boolean
+  sessionId: string
+  userId: number
+  username: string
+  messages: HomeAgentMessage[]
+  sessions: HomeSessionItem[]
+}
+
+export function fetchHomeAgent(sessionId?: string): Promise<HomeAgent> {
+  const path = sessionId ? `/api/home/agent?session=${encodeURIComponent(sessionId)}` : '/api/home/agent'
+  return getJson<HomeAgent>(path)
+}
+
+export async function resetHomeAgent(): Promise<HomeAgent> {
+  const response = await fetch('/api/home/agent/session', { method: 'POST' })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    const detail = body && typeof body.detail === 'string' ? body.detail : ''
+    throw new Error(detail || '会话没有换。')
+  }
+  return response.json() as Promise<HomeAgent>
+}
+
+export async function sendHomeAgent(text: string, files: HomeAgentFile[]): Promise<HomeAgent> {
+  const response = await fetch('/api/home/agent', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ text, files }),
+  })
+  if (!response.ok) {
+    const body = await response.json().catch(() => null)
+    const detail = body && typeof body.detail === 'string' ? body.detail : ''
+    throw new Error(detail || '没有发出去。')
+  }
+  return response.json() as Promise<HomeAgent>
+}
+
+export async function uploadHomeFile(file: File): Promise<HomeAgentFile> {
+  const body = new FormData()
+  body.append('file', file)
+  const response = await fetch('/api/home/agent/files', { method: 'POST', body })
+  if (!response.ok) {
+    const payload = await response.json().catch(() => null)
+    const detail = payload && typeof payload.detail === 'string' ? payload.detail : ''
+    throw new Error(detail || '附件没有传上去。')
+  }
+  return response.json() as Promise<HomeAgentFile>
+}
+
 export interface WorkCommit {
   sha: string
   subject: string
@@ -116,10 +198,17 @@ export interface GitlabProject {
   webUrl: string
 }
 
-export function fetchGitlabProjects(query: string): Promise<GitlabProject[]> {
+export async function fetchGitlabProjects(query: string): Promise<GitlabProject[]> {
   const search = query.trim()
   const path = search ? `/api/gitlab/projects?q=${encodeURIComponent(search)}` : '/api/gitlab/projects'
-  return getJson<GitlabProject[]>(path)
+  const response = await fetch(path)
+  if (response.status === 401) {
+    throw new Error('需要重新登录。')
+  }
+  if (!response.ok) {
+    throw new Error('GitLab 仓库没有读到。')
+  }
+  return response.json() as Promise<GitlabProject[]>
 }
 
 export async function saveProject(id: number, name: string, path: string): Promise<Project> {

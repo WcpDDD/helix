@@ -35,7 +35,8 @@ public final class WorkerProcess {
 		}
 		loadToolchain();
 		AgentKitRuntime runtime = new AgentKitRuntime(new AgentKitProperties(
-				null, setting("AGENTKIT_MODEL", ""), setting("AGENTKIT_BASE_URL", ""), setting("AGENTKIT_API_KEY", ""), null),
+				null, setting("AGENTKIT_MODEL", ""), setting("AGENTKIT_BASE_URL", ""), setting("AGENTKIT_API_KEY", ""), null,
+				setting("AGENTKIT_VL_MODEL", "")),
 				root.resolve("agent-sessions"));
 		WorkerSessions sessions = new WorkerSessions(root, System.getenv(), (thread, message, workspace, gitlab, sink, profile) -> runtime.begin(
 				thread, instructions(profile.body(), issueOf(workspace), server, id), id, message, workspace, gitlab, sink,

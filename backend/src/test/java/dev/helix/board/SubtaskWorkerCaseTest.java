@@ -199,7 +199,7 @@ class SubtaskWorkerCaseTest {
 		if (model == null || model.isBlank() || apiKey == null || apiKey.isBlank()) {
 			throw new IllegalStateException("agent-kit lab .env 缺 AGENTKIT_MODEL 或 AGENTKIT_API_KEY");
 		}
-		return new AgentKitProperties(null, model, baseUrl, apiKey, 6);
+		return new AgentKitProperties(null, model, baseUrl, apiKey, 6, null);
 	}
 
 	private record Fixture(long childId, long agentId) {
