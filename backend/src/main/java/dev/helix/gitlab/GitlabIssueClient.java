@@ -169,10 +169,37 @@ public class GitlabIssueClient {
 
 	public void writeDescription(String accessToken, String gitHost, String owner, String repo, int iid,
 			String description, boolean close) {
+		putIssue(accessToken, gitHost, owner, repo, iid, description, null, List.of(), close);
+	}
+
+	public void writeStatus(String accessToken, String gitHost, String owner, String repo, int iid, String description,
+			String addLabel, List<String> removeLabels, boolean close) {
+		try {
+			putIssue(accessToken, gitHost, owner, repo, iid, description, addLabel, removeLabels, close);
+		}
+		catch (GitlabIssueException exception) {
+			if (exception.status() != 400 || addLabel == null || addLabel.isBlank()) {
+				throw exception;
+			}
+			String origin = origin(gitHost);
+			String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+			ensureLabel(accessToken, origin, project, addLabel);
+			putIssue(accessToken, gitHost, owner, repo, iid, description, addLabel, removeLabels, close);
+		}
+	}
+
+	private void putIssue(String accessToken, String gitHost, String owner, String repo, int iid, String description,
+			String addLabel, List<String> removeLabels, boolean close) {
 		String origin = origin(gitHost);
 		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
 		Map<String, String> body = new LinkedHashMap<>();
 		body.put("description", description);
+		if (removeLabels != null && !removeLabels.isEmpty()) {
+			body.put("remove_labels", String.join(",", removeLabels));
+		}
+		if (addLabel != null && !addLabel.isBlank()) {
+			body.put("add_labels", addLabel);
+		}
 		if (close) {
 			body.put("state_event", "close");
 		}

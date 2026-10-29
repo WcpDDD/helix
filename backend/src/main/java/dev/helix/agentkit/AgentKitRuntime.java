@@ -25,6 +25,7 @@ import io.agentkit.api.session.SessionStorage;
 import io.agentkit.execution.assembly.AssetInstalling;
 import io.agentkit.execution.env.local.LocalFsEnvProvider;
 import io.agentkit.execution.facade.ExecutionFacade;
+import io.agentkit.execution.meta.BuiltinToolFace;
 import io.agentkit.execution.meta.EnvPrimitiveTools;
 import io.agentkit.execution.react.DefaultReActConstructor;
 import io.agentkit.execution.session.DefaultSessionService;
@@ -227,7 +228,8 @@ public class AgentKitRuntime {
 		RoutingProvider llm = new RoutingProvider(List.of(
 				new TencentMaasBackend(llmConfig),
 				new OpenAICompatibleBackend(llmConfig)));
-		ReActConstructor constructor = new DefaultReActConstructor(llm, new EnvPrimitiveTools(), List.of());
+		ReActConstructor constructor = new DefaultReActConstructor(llm,
+				BuiltinToolFace.compose(llm, null, null, null, () -> properties.model().strip()), List.of());
 		DefaultSessionService service = new DefaultSessionService(
 				memory, constructor, properties.model().strip(), systemPrompt, properties.turns(),
 				new LocalFsEnvProvider(), assets().mounting(), new AssetInstalling());

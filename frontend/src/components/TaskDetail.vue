@@ -259,19 +259,26 @@ function applyGoal(status: GoalStatus) {
   goalNote.value = status.note
 }
 
-async function loadHitlReason() {
+let hitlLoad = 0
+
+async function loadHitlReason(code: string) {
+  const request = ++hitlLoad
   hitlReason.value = ''
   try {
-    const seats = await fetchIssueAgents(props.task.code)
+    const seats = await fetchIssueAgents(code)
+    if (request !== hitlLoad || props.task.code !== code) return
     const manager = seats.find((seat) => seat.tag === 'manager' && seat.assigned)
     if (!manager) return
-    const page = await fetchAgentConversations(props.task.code, manager.agentId)
+    const page = await fetchAgentConversations(code, manager.agentId)
+    if (request !== hitlLoad || props.task.code !== code) return
     const latest = [...page.messages].reverse().find((item) => item.role === 'assistant' && item.preview)
     if (!latest) return
-    const full = await fetchAgentConversation(props.task.code, manager.agentId, latest.seq)
+    const full = await fetchAgentConversation(code, manager.agentId, latest.seq)
+    if (request !== hitlLoad || props.task.code !== code) return
     const text = full.parts.filter((part) => part.kind === 'text' && part.text).map((part) => part.text).join('\n')
     hitlReason.value = text.trim()
   } catch {
+    if (request !== hitlLoad || props.task.code !== code) return
     hitlReason.value = ''
   }
 }
@@ -308,12 +315,15 @@ async function dismissHitl() {
 }
 
 watch(
-  () => props.task.hitl,
-  (waiting) => {
-    if (!waiting) return
+  [() => props.task.code, () => props.task.hitl],
+  ([code, waiting]) => {
     hitlCleared.value = false
     hitlCollapsed.value = false
-    void loadHitlReason()
+    hitlDraft.value = ''
+    hitlError.value = ''
+    hitlReason.value = ''
+    if (!waiting) return
+    void loadHitlReason(code)
   },
   { immediate: true },
 )
@@ -356,7 +366,13 @@ async function refreshGoal() {
   if (!goalText.value) return
   try {
     const status = await fetchGoal(props.task.code)
-    if (status.phase === 'idle') return
+    // 托管标签没了（别人结束、manager 摘掉）→ 回到委托表单，别卡在假进度页
+    if (status.phase === 'idle') {
+      goalText.value = ''
+      goalDraft.value = ''
+      applyGoal(status)
+      return
+    }
     applyGoal(status)
   }
   catch {

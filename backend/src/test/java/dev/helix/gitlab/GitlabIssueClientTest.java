@@ -52,6 +52,24 @@ class GitlabIssueClientTest {
 	}
 
 	@Test
+	void writeStatusReplacesTheStatusLabelAndKeepsTheDescription() {
+		RestClient.Builder builder = RestClient.builder();
+		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();
+		GitlabIssueClient client = new GitlabIssueClient(builder.build());
+		server.expect(requestTo(
+				"https://hackers.oalite.com/api/v4/projects/qingflow-develop%2Fqingflow-workspace/issues/21"))
+				.andExpect(method(HttpMethod.PUT))
+				.andExpect(header("Authorization", "Bearer tok"))
+				.andExpect(content().json(
+						"{\"description\":\"正文\",\"remove_labels\":\"status/proposal\",\"add_labels\":\"status/in-progress\"}"))
+				.andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
+
+		client.writeStatus("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 21, "正文",
+				"status/in-progress", java.util.List.of("status/proposal"), false);
+		server.verify();
+	}
+
+	@Test
 	void postsACommentOntoTheIssue() {
 		RestClient.Builder builder = RestClient.builder();
 		MockRestServiceServer server = MockRestServiceServer.bindTo(builder).build();

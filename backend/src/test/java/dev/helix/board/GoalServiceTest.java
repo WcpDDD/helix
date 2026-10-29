@@ -99,6 +99,24 @@ class GoalServiceTest {
 		assertThat(view.note()).isEqualTo("交给你确认。");
 	}
 
+	@Test
+	void aStandaloneAgentRunIsNotGoalMode() {
+		GitlabIssueClient gitlab = mock(GitlabIssueClient.class);
+		when(gitlab.opened(anyString(), anyString(), anyString(), anyString()))
+				.thenReturn(List.of(new OpenedIssue(235, List.of("type/feature", "status/proposal"))));
+		AgentPresence presence = new AgentPresence(Duration.ofSeconds(15));
+		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, 9L)));
+		ScheduleLog journal = new ScheduleLog(Path.of("target", "goal-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
+		ManagerAnalysis analysis = new ManagerAnalysis(mock(AgentRepository.class), mock(AgentSessionService.class),
+				new MockRuntime(), presence, journal);
+		GoalService goals = new GoalService(gitlab, analysis, new MockRuntime(), presence);
+
+		GoalService.GoalView view = goals.status("tok", project(), 235);
+
+		assertThat(view.phase()).isEqualTo("idle");
+		assertThat(view.note()).isEmpty();
+	}
+
 	private static GoalService goals(GitlabIssueClient gitlab, AgentRepository repository, AgentSessionService sessions) {
 		ScheduleLog journal = new ScheduleLog(Path.of("target", "goal-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
 		AgentPresence presence = new AgentPresence(Duration.ofSeconds(15));

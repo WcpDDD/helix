@@ -1,7 +1,7 @@
 export const agentTagGroups = [
   {
-    id: 'global',
-    label: '全局',
+    id: 'coordinate',
+    label: '调度',
     tags: [
       { id: 'manager', hint: '按 issue、MR、流程规范、产物和上一个 agent 的结果做流转。定期唤起；issue 未结束、无人机协同、没有 agent 在做时才运行' },
       { id: 'arch', hint: '拆解中大型任务，管理并行契约，并审契约破坏' },

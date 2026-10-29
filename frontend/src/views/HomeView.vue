@@ -185,7 +185,7 @@ function isOverdue(task: Task): boolean {
           <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
         </div>
       </aside>
-      <TaskDetail v-if="selected" :task="selected" @close="selectedCode = null" @refresh="reloadBoard" />
+      <TaskDetail v-if="selected" :key="selected.code" :task="selected" @close="selectedCode = null" @refresh="reloadBoard" />
     </div>
 
     <div v-if="ready && !loadError && !selected" class="table-wrap">

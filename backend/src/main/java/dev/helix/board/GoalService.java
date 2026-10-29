@@ -86,6 +86,11 @@ public class GoalService {
 
 	private GoalView view(String token, ProjectEntity project, int iid) {
 		List<String> labels = labels(token, project, iid);
+		// 只有打了托管/人机标签才算进入目标模式。单独点开某个 agent 跑一轮不算委托，
+		// 否则前端会把进度页当成已开启，挡掉「委托开发」。
+		if (!labels.contains(ProposalDraft.AI) && !labels.contains(ProposalDraft.HITL)) {
+			return new GoalView("idle", "");
+		}
 		if (labels.contains(ProposalDraft.HITL)) {
 			return new GoalView("confirm", "交给你确认。");
 		}
@@ -99,10 +104,7 @@ public class GoalService {
 				return new GoalView("turn", busy.get().tag() + " 正在做。");
 			}
 		}
-		if (labels.contains(ProposalDraft.AI)) {
-			return new GoalView("turn", "manager 正在看 issue 和 MR，决定下一步派谁。");
-		}
-		return new GoalView("idle", "");
+		return new GoalView("turn", "manager 正在看 issue 和 MR，决定下一步派谁。");
 	}
 
 	private List<String> withManaged(String token, ProjectEntity project, int iid) {

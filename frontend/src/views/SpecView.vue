@@ -36,7 +36,7 @@ watch(
 )
 
 function back() {
-  router.push({ path: '/', query: { task: code.value } })
+  router.push({ path: '/tasks', query: { task: code.value } })
 }
 </script>
 

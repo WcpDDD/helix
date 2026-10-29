@@ -131,7 +131,7 @@ public class TaskBoardService {
 	private static TaskView taskFromHead(ProjectEntity project, int number, GitlabIssueClient.IssueHead head,
 			BoardFile board, Map<Integer, GitlabIssueClient.IssueHead> byNumber) {
 		String status = statusOf(head);
-		String stage = declaredStage(head == null ? "" : head.description(), status);
+		String stage = declaredStage(head, status);
 		List<TaskView.ChildIssueView> children = new ArrayList<>();
 		for (int childNumber : board.childrenOf(number)) {
 			GitlabIssueClient.IssueHead child = byNumber.get(childNumber);
@@ -190,10 +190,9 @@ public class TaskBoardService {
 
 	private static TaskView.ChildIssueView childFromHead(ProjectEntity project, int number,
 			GitlabIssueClient.IssueHead head) {
-		String description = head == null ? "" : head.description();
 		String status = statusOf(head);
 		return new TaskView.ChildIssueView(Integer.toString(number), issueUrl(project, number), titleOf(number, head),
-				status, declaredStage(description, status), ownerOf(head), "", authorOf(head), "", "", "", "", "",
+				status, declaredStage(head, status), ownerOf(head), "", authorOf(head), "", "", "", "", "",
 				List.of(), List.of());
 	}
 
@@ -229,19 +228,16 @@ public class TaskBoardService {
 	}
 
 	private static String statusOf(GitlabIssueClient.IssueHead head) {
-		String declared = head == null ? null : IssueStatusText.statusOf(head.description());
-		if (declared != null && IssueStatusText.STATUSES.contains(declared)) {
-			return declared;
+		if (head == null) {
+			return "提案中";
 		}
-		if (head != null && "closed".equalsIgnoreCase(head.state())) {
-			return "已关闭";
-		}
-		return "提案中";
+		String declared = IssueStatusText.from(head.labels(), head.state(), head.description());
+		return declared == null ? "提案中" : declared;
 	}
 
-	private static String declaredStage(String description, String status) {
-		String stage = IssueStatusText.stageOf(description);
-		return stage == null ? IssueStatusText.stageFor(status, "提案") : stage;
+	private static String declaredStage(GitlabIssueClient.IssueHead head, String status) {
+		String description = head == null ? "" : head.description();
+		return IssueStatusText.stageMatching(description, status, "提案");
 	}
 
 	private static String issueUrl(ProjectEntity project, int number) {

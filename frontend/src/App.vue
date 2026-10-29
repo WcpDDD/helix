@@ -95,7 +95,8 @@ onUnmounted(() => {
         Helix
       </RouterLink>
       <nav class="nav">
-        <RouterLink to="/">任务</RouterLink>
+        <RouterLink to="/">首页</RouterLink>
+        <RouterLink to="/tasks">任务</RouterLink>
         <RouterLink to="/skills">Skill</RouterLink>
         <RouterLink to="/members">成员</RouterLink>
         <RouterLink to="/agents">Agent</RouterLink>

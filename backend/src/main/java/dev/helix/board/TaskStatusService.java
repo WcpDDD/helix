@@ -41,14 +41,14 @@ public class TaskStatusService {
 				ProjectEntity project = entry.getKey();
 				List<IssueEntity> group = entry.getValue();
 				List<Integer> numbers = group.stream().map(IssueEntity::getGitIssueNumber).toList();
-				Map<Integer, String> remote = gitlab.descriptions(accessToken, project.getGitHost(), project.getGitOwner(),
-						project.getGitRepo(), numbers);
+				Map<Integer, GitlabIssueClient.IssueHead> remote = gitlab.heads(accessToken, project.getGitHost(),
+						project.getGitOwner(), project.getGitRepo(), numbers);
 				for (IssueEntity main : group) {
-					String description = remote.get(main.getGitIssueNumber());
-					if (description == null) {
+					GitlabIssueClient.IssueHead head = remote.get(main.getGitIssueNumber());
+					if (head == null) {
 						continue;
 					}
-					adoptIfDeclared(main, description);
+					adoptIfDeclared(main, head);
 				}
 			}
 		}
@@ -67,14 +67,17 @@ public class TaskStatusService {
 		}
 		ProjectEntity project = projects.findById(projectId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
-		String current = read(accessToken, project, number);
+		GitlabIssueClient.IssueDetail detail = load(accessToken, project, number);
+		String current = detail.description() == null ? "" : detail.description();
 		String declared = IssueStatusText.stageOf(current);
 		String stage = IssueStatusText.stageFor(requested, declared == null ? "" : declared);
 		String next = IssueStatusText.withStatus(current, requested, stage);
+		String label = IssueStatusText.labelFor(requested);
+		List<String> remove = IssueStatusText.statusLabelsToRemove(detail.labels(), label);
 		boolean close = "已关闭".equals(requested) || "已驳回".equals(requested) || "已上线".equals(requested);
 		try {
-			gitlab.writeDescription(accessToken, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), number,
-					next, close);
+			gitlab.writeStatus(accessToken, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), number,
+					next, label, remove, close);
 		}
 		catch (GitlabIssueException exception) {
 			if (exception.status() == 401 || exception.status() == 403) {
@@ -87,35 +90,28 @@ public class TaskStatusService {
 	}
 
 	private Transition followIssue(String accessToken, ProjectEntity project, int number) {
-		String description = read(accessToken, project, number);
-		String issueStatus = IssueStatusText.statusOf(description);
+		GitlabIssueClient.IssueDetail detail = load(accessToken, project, number);
+		String description = detail.description() == null ? "" : detail.description();
+		String issueStatus = IssueStatusText.from(detail.labels(), null, description);
 		if (issueStatus == null) {
 			return new Transition("提案中", "提案", false);
 		}
-		String declared = IssueStatusText.stageOf(description);
-		String stage = declared == null ? IssueStatusText.stageFor(issueStatus, "") : declared;
+		String stage = IssueStatusText.stageMatching(description, issueStatus, "");
 		return new Transition(issueStatus, stage, false);
 	}
 
-	private void adoptIfDeclared(IssueEntity main, String description) {
-		String issueStatus = IssueStatusText.statusOf(description);
+	private void adoptIfDeclared(IssueEntity main, GitlabIssueClient.IssueHead head) {
+		String description = head.description() == null ? "" : head.description();
+		String issueStatus = IssueStatusText.from(head.labels(), head.state(), description);
 		if (issueStatus == null) {
 			return;
 		}
-		String stage = stageFromIssue(description, issueStatus, main.getTask().getRollupStage());
+		String stage = IssueStatusText.stageMatching(description, issueStatus, main.getTask().getRollupStage());
 		if (issueStatus.equals(main.getStatus()) && stage.equals(main.getStage())
 				&& issueStatus.equals(main.getTask().getRollupStatus()) && stage.equals(main.getTask().getRollupStage())) {
 			return;
 		}
 		adopt(main, issueStatus, stage);
-	}
-
-	private static String stageFromIssue(String description, String status, String current) {
-		if ("已关闭".equals(status)) {
-			String declared = IssueStatusText.stageOf(description);
-			return declared == null ? IssueStatusText.stageFor(status, current) : declared;
-		}
-		return IssueStatusText.stageFor(status, current);
 	}
 
 	private void adopt(IssueEntity main, String status, String stage) {
@@ -134,10 +130,14 @@ public class TaskStatusService {
 		return mains;
 	}
 
-	private String read(String accessToken, ProjectEntity project, int number) {
+	private GitlabIssueClient.IssueDetail load(String accessToken, ProjectEntity project, int number) {
 		try {
-			return gitlab.description(accessToken, project.getGitHost(), project.getGitOwner(), project.getGitRepo(),
-					number);
+			GitlabIssueClient.IssueDetail detail = gitlab.detail(accessToken, project.getGitHost(), project.getGitOwner(),
+					project.getGitRepo(), number);
+			if (detail == null) {
+				return new GitlabIssueClient.IssueDetail("", List.of());
+			}
+			return detail;
 		}
 		catch (GitlabIssueException exception) {
 			if (exception.status() == 401 || exception.status() == 403) {
