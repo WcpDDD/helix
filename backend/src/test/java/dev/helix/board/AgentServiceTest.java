@@ -28,13 +28,7 @@ class AgentServiceTest {
 		AgentService service = new AgentService(agents);
 		ProjectEntity project = new ProjectEntity("qingflow", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace");
 		when(agents.existsByProject_IdAndName(null, "review")).thenReturn(false);
-		when(agents.save(any())).thenAnswer(invocation -> {
-			AgentEntity agent = invocation.getArgument(0);
-			var id = AgentEntity.class.getDeclaredField("id");
-			id.setAccessible(true);
-			id.set(agent, 7L);
-			return agent;
-		});
+		when(agents.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
 		var savedView = service.create(project, new AgentDraft(" review ", "按引用的 skill 审阅。", List.of(
 				"skills/backend-review/SKILL.md",
@@ -107,11 +101,10 @@ class AgentServiceTest {
 	void letsTheCurrentManagerKeepItsRole() {
 		AgentService service = new AgentService(agents);
 		ProjectEntity project = new ProjectEntity("qingflow", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace");
-		AgentEntity agent = new AgentEntity(project, "lead", "");
-		setId(agent, 7L);
-		when(agents.findByIdAndProject_Id(7L, null)).thenReturn(Optional.of(agent));
+		when(agents.findByProject_IdAndName(null, "lead")).thenReturn(Optional.of(agent));
+		when(agents.existsByProject_IdAndTagAndNameNot(null, "manager", "lead")).thenReturn(false);
 		when(agents.existsByProject_IdAndTagAndIdNot(null, "manager", 7L)).thenReturn(false);
-
+		var savedView = service.update(project, "lead", new AgentDraft("lead", "", List.of(), "manager"));
 		var savedView = service.update(project, 7L, new AgentDraft("lead", "", List.of(), "manager"));
 
 		assertThat(savedView.tag()).isEqualTo("manager");

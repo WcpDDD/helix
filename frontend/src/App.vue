@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
+import { useLdapAccountStore } from '@/stores/ldapAccount'
 import { useProjectStore } from '@/stores/projects'
 import { useSessionStore } from '@/stores/session'
 
 const session = useSessionStore()
+const ldap = useLdapAccountStore()
 const projects = useProjectStore()
 const route = useRoute()
 const router = useRouter()
@@ -26,8 +28,12 @@ watch(
     window.clearInterval(workTimer)
     if (!user) {
       projects.work = null
+      ldap.reset()
       return
     }
+    void ldap.load().catch(() => {
+      ldap.reset()
+    })
     void projects.refreshWork()
     workTimer = window.setInterval(() => void projects.refreshWork(), 5000)
   },
@@ -97,6 +103,7 @@ onUnmounted(() => {
       <nav class="nav">
         <RouterLink to="/">首页</RouterLink>
         <RouterLink to="/tasks">任务</RouterLink>
+        <RouterLink to="/releases">发布计划</RouterLink>
         <RouterLink to="/skills">Skill</RouterLink>
         <RouterLink to="/members">成员</RouterLink>
         <RouterLink to="/agents">Agent</RouterLink>

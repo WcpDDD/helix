@@ -1,5 +1,7 @@
 package dev.helix.board;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -25,12 +27,15 @@ public class TaskStatusService {
 
 	private final WorkspaceBoard boards;
 
+	private final ReleasePlanStore releases;
+
 	public TaskStatusService(IssueRepository issues, ProjectRepository projects, GitlabIssueClient gitlab,
-			WorkspaceBoard boards) {
+			WorkspaceBoard boards, ReleasePlanStore releases) {
 		this.issues = issues;
 		this.projects = projects;
 		this.gitlab = gitlab;
 		this.boards = boards;
+		this.releases = releases;
 	}
 
 	@Transactional
@@ -58,15 +63,19 @@ public class TaskStatusService {
 	}
 
 	@Transactional
-	public Transition transition(String accessToken, long projectId, int number, String requested) {
+	public Transition transition(String accessToken, long projectId, int number, String requested, String releaseOn) {
 		if (!IssueStatusText.STATUSES.contains(requested)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
 		}
+		LocalDate release = "待上线池".equals(requested) ? releaseDate(releaseOn) : null;
 		if (boards.current(projectId).isChild(number)) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND);
 		}
 		ProjectEntity project = projects.findById(projectId)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+		if (release != null) {
+			releases.save(project, number, release);
+		}
 		GitlabIssueClient.IssueDetail detail = load(accessToken, project, number);
 		String current = detail.description() == null ? "" : detail.description();
 		String declared = IssueStatusText.stageOf(current);
@@ -86,7 +95,18 @@ public class TaskStatusService {
 			return followIssue(accessToken, project, number);
 		}
 		issues.findInProject(projectId, number).ifPresent(main -> adopt(main, requested, stage));
-		return new Transition(requested, stage, true);
+		return new Transition(requested, stage, true, release == null ? null : release.toString());
+	}
+
+	public String schedule(long projectId, int number, String releaseOn) {
+		LocalDate release = releaseDate(releaseOn);
+		if (boards.current(projectId).isChild(number)) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+		}
+		ProjectEntity project = projects.findById(projectId)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+		releases.save(project, number, release);
+		return release.toString();
 	}
 
 	private Transition followIssue(String accessToken, ProjectEntity project, int number) {
@@ -94,10 +114,22 @@ public class TaskStatusService {
 		String description = detail.description() == null ? "" : detail.description();
 		String issueStatus = IssueStatusText.from(detail.labels(), null, description);
 		if (issueStatus == null) {
-			return new Transition("提案中", "提案", false);
+			return new Transition("提案中", "提案", false, null);
 		}
 		String stage = IssueStatusText.stageMatching(description, issueStatus, "");
-		return new Transition(issueStatus, stage, false);
+		return new Transition(issueStatus, stage, false, null);
+	}
+
+	private static LocalDate releaseDate(String raw) {
+		if (raw == null || !raw.matches("\\d{4}-\\d{2}-\\d{2}")) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "进入待上线池需要发布日期。");
+		}
+		try {
+			return LocalDate.parse(raw);
+		}
+		catch (DateTimeParseException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "发布日期不对。");
+		}
 	}
 
 	private void adoptIfDeclared(IssueEntity main, GitlabIssueClient.IssueHead head) {
@@ -147,7 +179,7 @@ public class TaskStatusService {
 		}
 	}
 
-	public record Transition(String status, String stage, boolean synced) {
+	public record Transition(String status, String stage, boolean synced, String releaseOn) {
 	}
 
 }

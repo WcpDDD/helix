@@ -1,5 +1,6 @@
 package dev.helix.board;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.LinkedHashMap;
@@ -25,14 +26,17 @@ public class TaskBoardService {
 	private final IssueEnvironmentRepository environments;
 	private final WorkspaceBoard boards;
 	private final GitlabIssueClient gitlab;
+	private final ReleasePlanStore releases;
 
 	public TaskBoardService(IssueRepository issues, IssueMergeRequestRepository mergeRequests,
-			IssueEnvironmentRepository environments, WorkspaceBoard boards, GitlabIssueClient gitlab) {
+			IssueEnvironmentRepository environments, WorkspaceBoard boards, GitlabIssueClient gitlab,
+			ReleasePlanStore releases) {
 		this.issues = issues;
 		this.mergeRequests = mergeRequests;
 		this.environments = environments;
 		this.boards = boards;
 		this.gitlab = gitlab;
+		this.releases = releases;
 	}
 
 	@Transactional
@@ -82,10 +86,12 @@ public class TaskBoardService {
 					task.getFinishedOn(),
 					summary(issue, requestsByIssue, environmentsByIssue),
 					children,
-					edges));
+					edges,
+					null));
 		}
 		views.sort(Comparator.comparingInt((TaskView view) -> Integer.parseInt(view.code())).reversed());
-		return views;
+		ProjectEntity project = issueRows.get(0).getProject();
+		return dated(project, views);
 	}
 
 	public List<TaskView> listCheckout(ProjectEntity project, BoardFile board, String token) {
@@ -99,7 +105,20 @@ public class TaskBoardService {
 			}
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "任务没有从主分支对应的 issue 读到。");
 		}
-		return arrange(project, board, heads);
+		return dated(project, arrange(project, board, heads));
+	}
+
+	private List<TaskView> dated(ProjectEntity project, List<TaskView> views) {
+		Map<Integer, LocalDate> dates = releases.read(project);
+		if (dates.isEmpty()) {
+			return views;
+		}
+		List<TaskView> next = new ArrayList<>();
+		for (TaskView view : views) {
+			LocalDate date = dates.get(Integer.parseInt(view.code()));
+			next.add(date == null ? view : view.release(date));
+		}
+		return next;
 	}
 
 	static List<TaskView> arrange(ProjectEntity project, BoardFile board, List<GitlabIssueClient.IssueHead> heads) {
@@ -146,7 +165,7 @@ public class TaskBoardService {
 			edges.add(new TaskView.EdgeView(from + "-" + to, from, to, edge.needsContract(), edge.contractRef()));
 		}
 		return new TaskView(Integer.toString(number), titleOf(number, head), ownerOf(head), status, stage, hitl(head), null,
-				null, null, summaryFromHead(project, number, head), children, edges);
+				null, null, summaryFromHead(project, number, head), children, edges, null);
 	}
 
 	private TaskView.IssueSummary summary(IssueEntity issue, Map<Long, List<TaskView.MergeRequestView>> requests,

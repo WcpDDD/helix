@@ -60,7 +60,7 @@ class ConversationApiTest {
 	void deadWorkerStopsTheConversation() throws Exception {
 		long projectId = projects.findAll(Sort.by("id")).getFirst().getId();
 		workers.save(new WorkerEntity("worker-quiet", "停机", Instant.EPOCH));
-		sessions.save(new AgentSessionEntity(projectId, 880021, 0, "worker-quiet"));
+		sessions.save(new AgentSessionEntity(projectId, 880021, "", "worker-quiet"));
 
 		mockMvc.perform(get("/api/issues/880021/conversations"))
 				.andExpect(status().isServiceUnavailable())
@@ -93,7 +93,7 @@ class ConversationApiTest {
 							+ server.getAddress().getPort() + "\"}"))
 					.andExpect(status().isOk());
 			long projectId = projects.findAll(Sort.by("id")).getFirst().getId();
-			sessions.save(new AgentSessionEntity(projectId, 880021, 0, "worker-talk"));
+			sessions.save(new AgentSessionEntity(projectId, 880021, "", "worker-talk"));
 
 			mockMvc.perform(get("/api/issues/880021/conversations").param("before", "8"))
 					.andExpect(status().isOk())

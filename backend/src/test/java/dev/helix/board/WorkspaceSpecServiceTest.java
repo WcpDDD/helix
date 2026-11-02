@@ -25,7 +25,7 @@ class WorkspaceSpecServiceTest {
 		WorkerRegistry registry = mock(WorkerRegistry.class);
 		WorkerConversationClient workers = mock(WorkerConversationClient.class);
 		when(sessions.findByProjectIdAndIssueNumberOrderByAgentIdAsc(1L, 321))
-				.thenReturn(List.of(new AgentSessionEntity(1L, 321, 2L, "worker-local")));
+				.thenReturn(List.of(new AgentSessionEntity(1L, 321, "developer", "worker-local")));
 		when(registry.live("worker-local"))
 				.thenReturn(Optional.of(new CallableWorker("worker-local", "本机", URI.create("http://127.0.0.1:8091"))));
 		when(workers.get(URI.create("http://127.0.0.1:8091"), "/sessions/321/spec")).thenReturn(

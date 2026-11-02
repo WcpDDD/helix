@@ -34,9 +34,12 @@ public class SubtaskScheduler {
 	}
 
 	@Transactional
-	public ScheduleView schedule(long issueId, long agentId, String message) {
+	public ScheduleView schedule(long issueId, String agentName, String message) {
 		IssueEntity issue = child(issueId);
-		AgentEntity agent = agents.findById(agentId)
+		if (agentName == null || agentName.isBlank()) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "没有这个 agent。");
+		}
+		AgentEntity agent = agents.findByProject_IdAndName(issue.getProject().getId(), agentName)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "没有这个 agent。"));
 		if (!agent.getProject().getId().equals(issue.getProject().getId())) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "agent 和子任务不在同一个项目。");
@@ -116,7 +119,7 @@ public class SubtaskScheduler {
 	private ScheduleView dispatch(IssueEntity issue, AgentEntity agent, String message) {
 		WorkerEntity worker = registry.requireLive();
 		SubtaskRouteEntity route = routes.save(new SubtaskRouteEntity(
-				issue.getId(), worker.getId(), agent.getId(), prompt(agent), message));
+				issue.getId(), worker.getId(), agent.getName(), prompt(agent), message));
 		return ScheduleView.of(route);
 	}
 
@@ -156,9 +159,9 @@ public class SubtaskScheduler {
 		return value.strip();
 	}
 
-	public record Dispatch(long issueId, long agentId, String systemPrompt, String message) {
+	public record Dispatch(long issueId, String agent, String systemPrompt, String message) {
 		static Dispatch of(SubtaskRouteEntity route) {
-			return new Dispatch(route.getIssueId(), route.getAgentId(), route.getSystemPrompt(), route.getMessage());
+			return new Dispatch(route.getIssueId(), route.getAgentName(), route.getSystemPrompt(), route.getMessage());
 		}
 	}
 

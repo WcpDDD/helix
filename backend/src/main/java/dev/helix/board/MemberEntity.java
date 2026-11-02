@@ -37,6 +37,9 @@ public class MemberEntity {
 	@Column(name = "gitlab_member", nullable = false, columnDefinition = "integer default 0 not null")
 	private boolean gitlabMember;
 
+	@Column(name = "access_level", nullable = false, columnDefinition = "varchar(20) default '' not null")
+	private String accessLevel = "";
+
 	@ElementCollection
 	@CollectionTable(name = "member_role", joinColumns = @JoinColumn(name = "member_id"))
 	@Column(name = "role", nullable = false)
@@ -76,6 +79,14 @@ public class MemberEntity {
 
 	public boolean isGitlabMember() {
 		return gitlabMember;
+	}
+
+	public String getAccessLevel() {
+		return accessLevel == null ? "" : accessLevel;
+	}
+
+	public void setAccessLevel(String accessLevel) {
+		this.accessLevel = accessLevel == null ? "" : accessLevel;
 	}
 
 	public void assignRoles(Collection<String> next) {

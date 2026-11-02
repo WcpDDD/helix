@@ -81,6 +81,7 @@ public class MemberSyncService {
 				member.rename(person.name());
 			}
 			member.markFromGitlab(true);
+			member.setAccessLevel(person.access() == null ? "" : person.access());
 			seen.add(person.username());
 		}
 		for (MemberEntity member : existing) {

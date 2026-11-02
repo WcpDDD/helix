@@ -8,6 +8,7 @@ interface Member {
   login: string
   name: string
   teamIds: string[]
+  access: string
 }
 
 interface Team {
@@ -61,11 +62,20 @@ watch(
   { immediate: true },
 )
 
+function accessText(access: string): string {
+  if (access === 'maintainer') return '维护者'
+  if (access === 'developer') return '开发者'
+  if (access === 'reporter') return '报告者'
+  if (access === 'guest') return '访客'
+  return '未同步'
+}
+
 function applyBoard(board: MemberBoard) {
   members.value = board.members.map((member) => ({
     login: member.login,
     name: member.name,
     teamIds: member.teamIds,
+    access: member.access || '',
   }))
   teams.value = board.teams
   labels.value = board.labels
@@ -188,7 +198,7 @@ async function addLabel() {
     <header class="head">
       <div>
         <h1>成员</h1>
-        <p>团队跟着 GitLab 同步，角色留在 Helix。</p>
+        <p>团队和 GitLab 权限跟着同步，角色留在 Helix。</p>
       </div>
       <div class="tools">
         <button type="button" class="sync" :disabled="syncing" @click="sync">
@@ -265,6 +275,7 @@ async function addLabel() {
                 <span class="avatar" aria-hidden="true">{{ initial(member.name) }}</span>
                 <span class="who">
                   <strong>{{ member.name }}</strong>
+                  <span class="gitlab-role">{{ accessText(member.access) }}</span>
                   <span v-if="member.login !== member.name" class="login">{{ member.login }}</span>
                 </span>
               </div>
@@ -312,6 +323,7 @@ async function addLabel() {
           <span class="avatar" aria-hidden="true">{{ initial(member.name) }}</span>
           <span class="who">
             <strong>{{ member.name }}</strong>
+            <span class="gitlab-role">{{ accessText(member.access) }}</span>
             <span v-if="member.login !== member.name" class="login">{{ member.login }}</span>
           </span>
         </div>
@@ -576,6 +588,7 @@ tbody tr:last-child td {
 }
 
 .login,
+.gitlab-role,
 .unset {
   display: block;
   color: var(--muted);

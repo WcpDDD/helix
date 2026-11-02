@@ -22,6 +22,7 @@ const query = ref('')
 const othersOpen = ref(false)
 const saving = ref(false)
 const notice = ref('')
+const releaseOn = ref('')
 const settle = inject(taskTransitionKey)
 
 const filteredPeople = computed(() => {
@@ -33,6 +34,7 @@ const canConfirm = computed(() => {
   if (!pending.value) return false
   if (pending.value.needsReason && !reason.value.trim()) return false
   if (pending.value.needsOwners && picked.value.length === 0) return false
+  if (pending.value.needsRelease && !releaseOn.value) return false
   return !saving.value
 })
 
@@ -49,6 +51,7 @@ watch(
     reason.value = ''
     picked.value = []
     query.value = ''
+    releaseOn.value = ''
     notice.value = ''
   },
 )
@@ -65,6 +68,7 @@ function pick(move: Move) {
   pendingIssueId.value = props.issueId
   pending.value = move
   reason.value = ''
+  releaseOn.value = ''
   picked.value = move.needsOwners ? [...props.owners] : []
   query.value = ''
   othersOpen.value = false
@@ -77,6 +81,7 @@ function toggleOwner(name: string) {
 function cancel() {
   pending.value = null
   reason.value = ''
+  releaseOn.value = ''
   picked.value = []
   query.value = ''
   if (pendingIssueId.value === props.issueId) pendingIssueId.value = null
@@ -89,7 +94,7 @@ async function confirm() {
   notice.value = ''
   const stage = stageFor(move.to, props.stage)
   try {
-    const result = await settle(props.issueId, move.to, stage)
+    const result = await settle(props.issueId, move.to, stage, move.needsRelease ? releaseOn.value : null)
     if (move.needsOwners && result.synced) rememberOwners(props.issueId, [...picked.value])
     if (result.synced) {
       cancel()
@@ -116,6 +121,10 @@ async function confirm() {
         <span aria-hidden="true">→</span>
         <span class="state" :class="statusTone(pending.to)">{{ pending.to }}</span>
       </p>
+      <label v-if="pending.needsRelease" class="reason">
+        发布日期
+        <input v-model="releaseOn" type="date" required />
+      </label>
       <label v-if="pending.needsReason" class="reason">
         原因
         <textarea v-model="reason" rows="2" placeholder="写明原因" />

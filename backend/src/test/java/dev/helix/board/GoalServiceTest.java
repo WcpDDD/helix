@@ -31,18 +31,17 @@ class GoalServiceTest {
 		ProjectEntity project = project();
 		AgentEntity manager = new AgentEntity(project, "manager", "你只调度。");
 		manager.retag("manager");
-		setId(manager, 8L);
 		when(gitlab.opened("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace"))
 				.thenReturn(List.of(new OpenedIssue(235, List.of("type/feature"))))
 				.thenReturn(List.of(new OpenedIssue(235, List.of("type/feature", "ai/managed"))));
 		when(repository.findWithSkillsByTag(3L, "manager")).thenReturn(java.util.Optional.of(manager));
-		when(sessions.create(3L, 235, 8L)).thenReturn(new IssueAgentView(8L, "manager", "manager", true, true, "worker-local", "本机"));
+		when(sessions.create(3L, 235, "manager")).thenReturn(new IssueAgentView("manager", "manager", true, true, "worker-local", "本机"));
 		GoalService goals = goals(gitlab, repository, sessions);
 
 		GoalService.GoalView view = goals.start("tok", project, 235, "做到测试通过");
 
 		verify(gitlab).addLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 235, "ai/managed");
-		verify(sessions).say(eq(3L), eq(235), eq(8L), contains("目标：做到测试通过"));
+		verify(sessions).say(eq(3L), eq(235), eq("manager"), contains("目标：做到测试通过"));
 		assertThat(view.phase()).isEqualTo("turn");
 	}
 
@@ -54,19 +53,18 @@ class GoalServiceTest {
 		ProjectEntity project = project();
 		AgentEntity manager = new AgentEntity(project, "manager", "你只调度。");
 		manager.retag("manager");
-		setId(manager, 8L);
 		when(gitlab.opened("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace"))
 				.thenReturn(List.of(new OpenedIssue(235, List.of("ai/hitl"))))
 				.thenReturn(List.of(new OpenedIssue(235, List.of("ai/managed"))));
 		when(repository.findWithSkillsByTag(3L, "manager")).thenReturn(java.util.Optional.of(manager));
-		when(sessions.create(3L, 235, 8L)).thenReturn(new IssueAgentView(8L, "manager", "manager", true, true, "worker-local", "本机"));
+		when(sessions.create(3L, 235, "manager")).thenReturn(new IssueAgentView("manager", "manager", true, true, "worker-local", "本机"));
 		GoalService goals = goals(gitlab, repository, sessions);
 
 		GoalService.GoalView view = goals.confirm("tok", project, 235, "按提案继续");
 
 		verify(gitlab).removeLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 235, "ai/hitl");
 		verify(gitlab).addLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 235, "ai/managed");
-		verify(sessions).say(eq(3L), eq(235), eq(8L), contains("人已确认：按提案继续"));
+		verify(sessions).say(eq(3L), eq(235), eq("manager"), contains("人已确认：按提案继续"));
 		assertThat(view.phase()).isEqualTo("turn");
 	}
 
@@ -82,7 +80,7 @@ class GoalServiceTest {
 
 		verify(gitlab).removeLabel("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 235, "ai/hitl");
 		verify(sessions, org.mockito.Mockito.never()).say(org.mockito.ArgumentMatchers.anyLong(), org.mockito.ArgumentMatchers.anyInt(),
-				org.mockito.ArgumentMatchers.anyLong(), anyString());
+				anyString(), anyString());
 		assertThat(view.phase()).isEqualTo("idle");
 	}
 
@@ -105,7 +103,7 @@ class GoalServiceTest {
 		when(gitlab.opened(anyString(), anyString(), anyString(), anyString()))
 				.thenReturn(List.of(new OpenedIssue(235, List.of("type/feature", "status/proposal"))));
 		AgentPresence presence = new AgentPresence(Duration.ofSeconds(15));
-		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, 9L)));
+		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, "兜底答疑")));
 		ScheduleLog journal = new ScheduleLog(Path.of("target", "goal-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
 		ManagerAnalysis analysis = new ManagerAnalysis(mock(AgentRepository.class), mock(AgentSessionService.class),
 				new MockRuntime(), presence, journal);

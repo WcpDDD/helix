@@ -39,7 +39,7 @@ public final class WorkerGateway {
 				reply(exchange, sessions.spec(issue));
 				return;
 			}
-			long agent = agent(exchange);
+			String agent = agent(exchange);
 			if (bits.length == 4 && "messages".equals(bits[3]) && "POST".equals(method)) {
 				String request = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
 				reply(exchange, sessions.send(issue, agent, request));
@@ -87,7 +87,7 @@ public final class WorkerGateway {
 		}
 	}
 
-	private static void stream(HttpExchange exchange, WorkerSessions sessions, int issue, long agent, long seq) throws IOException {
+	private static void stream(HttpExchange exchange, WorkerSessions sessions, int issue, String agent, long seq) throws IOException {
 		exchange.getResponseHeaders().set("Content-Type", "text/event-stream; charset=utf-8");
 		exchange.getResponseHeaders().set("Cache-Control", "no-cache");
 		exchange.sendResponseHeaders(200, 0);
@@ -96,16 +96,9 @@ public final class WorkerGateway {
 		}
 	}
 
-	private static long agent(HttpExchange exchange) {
+	private static String agent(HttpExchange exchange) {
 		String value = query(exchange, "agent");
-		if (value == null || value.isBlank()) {
-			return 0;
-		}
-		long agentId = Long.parseLong(value);
-		if (agentId < 0) {
-			throw new NumberFormatException();
-		}
-		return agentId;
+		return value == null ? "" : value;
 	}
 
 	private static Long before(HttpExchange exchange) {

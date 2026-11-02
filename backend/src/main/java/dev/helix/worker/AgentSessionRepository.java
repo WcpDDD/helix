@@ -10,6 +10,8 @@ public interface AgentSessionRepository extends JpaRepository<AgentSessionEntity
 
 	Optional<AgentSessionEntity> findByProjectIdAndIssueNumberAndAgentId(long projectId, int issueNumber, long agentId);
 
+	Optional<AgentSessionEntity> findByProjectIdAndIssueNumberAndAgentName(long projectId, int issueNumber, String agentName);
+
 	java.util.List<AgentSessionEntity> findByProjectIdAndIssueNumberOrderByAgentIdAsc(long projectId, int issueNumber);
 
 	java.util.List<AgentSessionEntity> findByWorkerIdAndIssueNumber(String workerId, int issueNumber);

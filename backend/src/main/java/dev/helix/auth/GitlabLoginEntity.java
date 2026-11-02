@@ -36,6 +36,12 @@ public class GitlabLoginEntity {
 	@Column(name = "updated_at", nullable = false)
 	private long updatedAt;
 
+	@Column(name = "ldap_uid")
+	private String ldapUid;
+
+	@Column(name = "ldap_password", length = 2048)
+	private String ldapPassword;
+
 	protected GitlabLoginEntity() {
 	}
 
@@ -109,6 +115,22 @@ public class GitlabLoginEntity {
 
 	public void setUpdatedAt(long updatedAt) {
 		this.updatedAt = updatedAt;
+	}
+
+	public String getLdapUid() {
+		return ldapUid == null ? "" : ldapUid;
+	}
+
+	public void setLdapUid(String ldapUid) {
+		this.ldapUid = ldapUid == null ? "" : ldapUid;
+	}
+
+	public String getLdapPassword() {
+		return ldapPassword == null ? "" : ldapPassword;
+	}
+
+	public void setLdapPassword(String ldapPassword) {
+		this.ldapPassword = ldapPassword == null ? "" : ldapPassword;
 	}
 
 	public GitlabUser user() {

@@ -1,0 +1,86 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: helix
+  namespace: helix
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: helix
+  template:
+    metadata:
+      labels:
+        app: helix
+    spec:
+      imagePullSecrets:
+        - name: harbor-secret
+      initContainers:
+        - name: prepare
+          image: harbor.oalite.com/devops/helix:20261103-1
+          imagePullPolicy: IfNotPresent
+          command: ["sh", "-c", "mkdir -p /var/helix/work /var/helix/agents /var/helix/workers /var/helix/agentkit/backend /var/helix/agentkit/worker"]
+          volumeMounts:
+            - name: data
+              mountPath: /var/helix
+      containers:
+        - name: backend
+          image: harbor.oalite.com/devops/helix:20261103-1
+          imagePullPolicy: IfNotPresent
+          workingDir: /var/helix
+          ports:
+            - name: http
+              containerPort: 8081
+          envFrom:
+            - configMapRef:
+                name: helix
+            - secretRef:
+                name: helix
+          startupProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 5
+            failureThreshold: 36
+          readinessProbe:
+            httpGet:
+              path: /api/health
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 3Gi
+          volumeMounts:
+            - name: data
+              mountPath: /var/helix
+            - name: data
+              mountPath: /root/.agentkit
+              subPath: agentkit/backend
+        - name: web
+          image: harbor.oalite.com/devops/helix-web:20261103-1
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 80
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+            periodSeconds: 10
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: helix-data

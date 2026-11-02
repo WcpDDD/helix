@@ -35,6 +35,10 @@ export function fetchCurrentProject(): Promise<Project> {
   return getJson<Project>('/api/projects/current')
 }
 
+export function fetchProjectAccess(): Promise<{ access: string }> {
+  return getJson<{ access: string }>('/api/projects/current/access')
+}
+
 export interface HomeAgentFile {
   name: string
   url: string
@@ -301,11 +305,12 @@ export function fetchSkillFile(path: string): Promise<SkillFile> {
 }
 
 export interface AgentRecord {
-  id: number
   name: string
   body: string
   skills: string[]
   tag: string | null
+  scope: 'global' | 'task'
+  access: string[]
 }
 
 export interface AgentDraft {
@@ -313,6 +318,8 @@ export interface AgentDraft {
   body: string
   skills: string[]
   tag: string | null
+  scope: 'global' | 'task'
+  access: string[]
 }
 
 export function fetchAgents(): Promise<AgentRecord[]> {
@@ -346,7 +353,6 @@ export function fetchAgentSession(number: string): Promise<AgentSession> {
 }
 
 export interface IssueAgent {
-  agentId: number
   name: string
   tag: string
   assigned: boolean
@@ -359,8 +365,8 @@ export function fetchIssueAgents(number: string): Promise<IssueAgent[]> {
   return getJson<IssueAgent[]>(`/api/issues/${encodeURIComponent(number)}/agent-sessions`)
 }
 
-export async function createIssueAgentSession(number: string, agentId: number): Promise<IssueAgent> {
-  const response = await fetch(`/api/issues/${encodeURIComponent(number)}/agents/${agentId}/session`, { method: 'POST' })
+export async function createIssueAgentSession(number: string, name: string): Promise<IssueAgent> {
+  const response = await fetch(`/api/issues/${encodeURIComponent(number)}/agents/${encodeURIComponent(name)}/session`, { method: 'POST' })
   if (!response.ok) {
     throw new Error(await failureDetail(response, '创建 Agent 会话失败。'))
   }
@@ -415,22 +421,22 @@ export interface ConversationFile {
 }
 
 export function fetchConversations(number: string, before?: number): Promise<ConversationPage> {
-  return fetchAgentConversations(number, 0, before)
+  return fetchAgentConversations(number, '', before)
 }
 
-export function fetchAgentConversations(number: string, agentId: number, before?: number): Promise<ConversationPage> {
+export function fetchAgentConversations(number: string, name: string, before?: number): Promise<ConversationPage> {
   const query = before == null ? '' : `?before=${encodeURIComponent(String(before))}`
-  const path = agentId > 0 ? `/api/issues/${encodeURIComponent(number)}/agents/${agentId}/conversations` : `/api/issues/${encodeURIComponent(number)}/conversations`
+  const path = name ? `/api/issues/${encodeURIComponent(number)}/agents/${encodeURIComponent(name)}/conversations` : `/api/issues/${encodeURIComponent(number)}/conversations`
   return getJson<ConversationPage>(`${path}${query}`)
 }
 
 export function fetchConversation(number: string, seq: number): Promise<ConversationMessage> {
-  return fetchAgentConversation(number, 0, seq)
+  return fetchAgentConversation(number, '', seq)
 }
 
-export function fetchAgentConversation(number: string, agentId: number, seq: number): Promise<ConversationMessage> {
-  const path = agentId > 0
-    ? `/api/issues/${encodeURIComponent(number)}/agents/${agentId}/conversations/${seq}`
+export function fetchAgentConversation(number: string, name: string, seq: number): Promise<ConversationMessage> {
+  const path = name
+    ? `/api/issues/${encodeURIComponent(number)}/agents/${encodeURIComponent(name)}/conversations/${seq}`
     : `/api/issues/${encodeURIComponent(number)}/conversations/${seq}`
   return getJson<ConversationMessage>(path)
 }
@@ -439,15 +445,15 @@ export async function sendConversation(number: string, text: string, files: stri
   user: ConversationMessage
   assistant: ConversationMessage
 }> {
-  return sendAgentConversation(number, 0, text, files)
+  return sendAgentConversation(number, '', text, files)
 }
 
-export async function sendAgentConversation(number: string, agentId: number, text: string, files: string[] = []): Promise<{
+export async function sendAgentConversation(number: string, name: string, text: string, files: string[] = []): Promise<{
   user: ConversationMessage
   assistant: ConversationMessage
 }> {
-  const path = agentId > 0
-    ? `/api/issues/${encodeURIComponent(number)}/agents/${agentId}/messages`
+  const path = name
+    ? `/api/issues/${encodeURIComponent(number)}/agents/${encodeURIComponent(name)}/messages`
     : `/api/issues/${encodeURIComponent(number)}/messages`
   const response = await fetch(path, {
     method: 'POST',
@@ -460,9 +466,9 @@ export async function sendAgentConversation(number: string, agentId: number, tex
   return response.json()
 }
 
-export async function fetchConversationFile(number: string, path: string, agentId = 0): Promise<ConversationFile> {
-  const base = agentId > 0
-    ? `/api/issues/${encodeURIComponent(number)}/agents/${agentId}/files`
+export async function fetchConversationFile(number: string, path: string, name = ''): Promise<ConversationFile> {
+  const base = name
+    ? `/api/issues/${encodeURIComponent(number)}/agents/${encodeURIComponent(name)}/files`
     : `/api/issues/${encodeURIComponent(number)}/files`
   const response = await fetch(`${base}?path=${encodeURIComponent(path)}`)
   if (!response.ok) {
@@ -481,19 +487,19 @@ export async function createAgent(draft: AgentDraft): Promise<AgentRecord> {
   return writeAgent('/api/agents', 'POST', draft)
 }
 
-export async function updateAgent(id: number, draft: AgentDraft): Promise<AgentRecord> {
-  return writeAgent(`/api/agents/${id}`, 'PUT', draft)
+export async function updateAgent(name: string, draft: AgentDraft): Promise<AgentRecord> {
+  return writeAgent(`/api/agents/${encodeURIComponent(name)}`, 'PUT', draft)
 }
 
-export async function deleteAgent(id: number): Promise<void> {
-  const response = await fetch(`/api/agents/${id}`, { method: 'DELETE' })
+export async function deleteAgent(name: string): Promise<void> {
+  const response = await fetch(`/api/agents/${encodeURIComponent(name)}`, { method: 'DELETE' })
   if (response.status === 401) {
     const error = new Error('login')
     error.name = 'IssueReadAuthError'
     throw error
   }
   if (!response.ok) {
-    throw new Error(`/api/agents/${id} returned ${response.status}`)
+    throw new Error(`/api/agents/${name} returned ${response.status}`)
   }
 }
 
@@ -549,7 +555,7 @@ export interface MemberRolePage {
 
 export interface MemberBoard {
   teams: { id: string; name: string }[]
-  members: { login: string; name: string; teamIds: string[]; roles: string[] }[]
+  members: { login: string; name: string; teamIds: string[]; roles: string[]; access: string }[]
   labels: string[]
 }
 
@@ -593,17 +599,36 @@ export async function createMemberLabel(name: string): Promise<string[]> {
   return response.json() as Promise<string[]>
 }
 
-export async function transitionTask(code: string, status: TaskStatus, stage: TaskStage): Promise<TaskTransitionResult> {
+export async function transitionTask(
+  code: string,
+  status: TaskStatus,
+  stage: TaskStage,
+  releaseOn?: string | null,
+): Promise<TaskTransitionResult> {
   const response = await fetch(`/api/tasks/${encodeURIComponent(code)}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status, stage }),
+    body: JSON.stringify({ status, stage, releaseOn: releaseOn || null }),
   })
   if (response.status !== 200 && response.status !== 409) {
     throw new Error(`${response.status}`)
   }
-  const body = (await response.json()) as { status: TaskStatus; stage: TaskStage }
-  return { status: body.status, stage: body.stage, synced: response.status === 200 }
+  const body = (await response.json()) as { status: TaskStatus; stage: TaskStage; releaseOn?: string | null }
+  return { status: body.status, stage: body.stage, synced: response.status === 200, releaseOn: body.releaseOn ?? null }
+}
+
+export async function scheduleRelease(code: string, releaseOn: string): Promise<string> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(code)}/release`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ releaseOn }),
+  })
+  if (!response.ok) {
+    if (response.status === 403) throw new Error('只有维护者可以改预计上线时间。')
+    throw new Error('预计上线时间没有保存。')
+  }
+  const body = (await response.json()) as { releaseOn: string }
+  return body.releaseOn
 }
 
 export async function fetchIssueBody(number: string): Promise<string> {
@@ -748,6 +773,44 @@ export interface GitlabUser {
   username: string
   name: string
   avatarUrl: string | null
+}
+
+export interface LdapAccount {
+  uid: string
+}
+
+async function ldapError(response: Response, fallback: string): Promise<never> {
+  const body = await response.json().catch(() => null)
+  const detail = body && typeof body.detail === 'string' ? body.detail : ''
+  throw new Error(detail || fallback)
+}
+
+export async function fetchLdapAccount(): Promise<LdapAccount> {
+  const response = await fetch('/api/account/ldap')
+  if (!response.ok) {
+    return ldapError(response, 'LDAP 账号没有读到。')
+  }
+  return response.json() as Promise<LdapAccount>
+}
+
+export async function saveLdapAccount(uid: string, password: string): Promise<LdapAccount> {
+  const response = await fetch('/api/account/ldap', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ uid, password }),
+  })
+  if (!response.ok) {
+    return ldapError(response, 'LDAP 账号没有记下。')
+  }
+  return response.json() as Promise<LdapAccount>
+}
+
+export async function clearLdapAccount(): Promise<LdapAccount> {
+  const response = await fetch('/api/account/ldap', { method: 'DELETE' })
+  if (!response.ok) {
+    return ldapError(response, 'LDAP 账号没有清除。')
+  }
+  return response.json() as Promise<LdapAccount>
 }
 
 export async function fetchSession(): Promise<GitlabUser | null> {

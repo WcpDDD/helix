@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
+import { computed, onUnmounted, ref, watch } from 'vue'
+import VirtualThread from '@/components/VirtualThread.vue'
 import {
   fetchHomeAgent,
   resetHomeAgent,
@@ -22,25 +23,68 @@ const error = ref('')
 const sending = ref(false)
 const uploading = ref(false)
 const resetting = ref(false)
-const threadEl = ref<HTMLElement | null>(null)
 const fileEl = ref<HTMLInputElement | null>(null)
 let composing = false
-let stickToBottom = true
+const stickToBottom = ref(true)
 let stream: EventSource | null = null
 let live: HomeAgentMessage | null = null
 let frame = 0
+let ticker = 0
+const toolStarted = new Map<string, number>()
+const now = ref(Date.now())
 
 const running = computed(() => view.value?.messages.some((item) => item.status === 'running') ?? false)
-const runningLabel = computed(() => {
-  const message = [...(view.value?.messages ?? [])].reverse().find((item) => item.role === 'assistant' && item.status === 'running')
-  return message ? subject(message) : ''
-})
+const runningMessage = computed(() =>
+  [...(view.value?.messages ?? [])].reverse().find((item) => item.role === 'assistant' && item.status === 'running'),
+)
+const runningLabel = computed(() => (runningMessage.value ? subject(runningMessage.value) : ''))
+const runningElapsed = computed(() => (runningMessage.value ? elapsed(runningMessage.value) : ''))
 const locked = computed(() => sending.value || running.value || view.value?.preparing === true || uploading.value)
 const canSend = computed(() => !locked.value && (draft.value.trim().length > 0 || files.value.length > 0))
 
 function subject(item: HomeAgentMessage) {
-  const tool = [...(item.tools ?? [])].reverse().find((entry) => entry.status === 'running' && entry.name && entry.name !== 'delegate')
-  return tool?.name ?? ''
+  return runningTool(item)?.name ?? ''
+}
+
+function runningTool(item: HomeAgentMessage) {
+  return [...(item.tools ?? [])].reverse().find((entry) => entry.status === 'running' && entry.name && entry.name !== 'delegate')
+}
+
+function remember(id: string, at: number) {
+  if (!toolStarted.has(id)) toolStarted.set(id, at)
+}
+
+function note(item: HomeAgentMessage, at: number) {
+  for (const tool of item.tools ?? []) {
+    if (tool.status === 'running') remember(tool.id, at)
+  }
+}
+
+function elapsed(item: HomeAgentMessage) {
+  const tool = runningTool(item)
+  const marked = tool ? toolStarted.get(tool.id) : undefined
+  const start = marked ?? Date.parse(item.at)
+  if (!Number.isFinite(start)) return ''
+  const total = Math.max(0, Math.floor((now.value - start) / 1000))
+  const hours = Math.floor(total / 3600)
+  const minutes = Math.floor((total % 3600) / 60)
+  const seconds = total % 60
+  const clock = `${minutes}:${String(seconds).padStart(2, '0')}`
+  return hours > 0 ? `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}` : clock
+}
+
+function tick(active: boolean) {
+  if (active) {
+    if (ticker) return
+    now.value = Date.now()
+    ticker = window.setInterval(() => {
+      now.value = Date.now()
+    }, 1000)
+    return
+  }
+  if (!ticker) return
+  window.clearInterval(ticker)
+  ticker = 0
 }
 
 function shownTools(item: HomeAgentMessage) {
@@ -61,6 +105,8 @@ function shown(agent: HomeAgent): HomeAgent {
   }
 }
 
+watch(running, (active) => tick(active), { immediate: true })
+
 watch(
   () => projects.currentId,
   () => {
@@ -72,25 +118,25 @@ watch(
   { immediate: true },
 )
 
-watch(
-  () =>
-    view.value?.messages
-      .map((item) => `${item.id}:${item.status}:${item.text}:${item.reasoning}:${item.tools?.length ?? 0}`)
-      .join('|'),
-  async () => {
-    await nextTick()
-    const thread = threadEl.value
-    if (thread && stickToBottom) thread.scrollTop = thread.scrollHeight
-  },
-)
-
 onUnmounted(() => {
   closeStream()
+  tick(false)
 })
 
+function homeKey(item: HomeAgentMessage) {
+  return item.id
+}
+
 async function load() {
+  stickToBottom.value = true
   try {
-    view.value = shown(await fetchHomeAgent())
+    const agent = shown(await fetchHomeAgent())
+    const loadedAt = Date.now()
+    for (const item of agent.messages) {
+      const origin = Date.parse(item.at)
+      note(item, Number.isFinite(origin) ? origin : loadedAt)
+    }
+    view.value = agent
     error.value = ''
   } catch (caught) {
     error.value = caught instanceof Error ? caught.message : '首页没有读到。'
@@ -131,6 +177,8 @@ function follow(sessionId: string) {
       message.reasoning = data.reasoning ?? ''
       message.status = data.status || (kind === 'done' ? 'done' : message.status)
       message.tools = data.tools ?? []
+      const origin = Date.parse(message.at)
+      note(message, Number.isFinite(origin) ? origin : Date.now())
     } else if (kind === 'text') {
       message.text += data.text || ''
     } else if (kind === 'thinking') {
@@ -148,6 +196,7 @@ function follow(sessionId: string) {
       if (index >= 0) tools[index] = tool
       else tools.push(tool)
       message.tools = tools
+      if (tool.status === 'running') remember(tool.id, Date.now())
     }
     paint()
     if (kind === 'done') {
@@ -195,6 +244,7 @@ async function submit() {
   const text = draft.value.trim()
   if (!canSend.value) return
   const attached = files.value.slice()
+  stickToBottom.value = true
   sending.value = true
   error.value = ''
   try {
@@ -211,6 +261,7 @@ async function submit() {
 
 async function openSession(id: string) {
   if (!view.value || view.value.sessionId === id || locked.value) return
+  stickToBottom.value = true
   closeStream()
   error.value = ''
   try {
@@ -222,6 +273,7 @@ async function openSession(id: string) {
 
 async function reset() {
   if (locked.value || resetting.value) return
+  stickToBottom.value = true
   closeStream()
   resetting.value = true
   error.value = ''
@@ -275,10 +327,9 @@ function onKeydown(event: KeyboardEvent) {
   void submit()
 }
 
-function onThreadScroll() {
-  const thread = threadEl.value
-  if (!thread) return
-  stickToBottom = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48
+function onThreadScroll(event: Event) {
+  const thread = event.target as HTMLElement
+  stickToBottom.value = thread.scrollHeight - thread.scrollTop - thread.clientHeight < 48
 }
 
 function clock(value: string) {
@@ -317,11 +368,23 @@ function html(text: string) {
       </nav>
       <button type="button" class="quiet" :disabled="locked || resetting || !view" @click="reset">新会话</button>
     </header>
-    <section ref="threadEl" class="thread" :class="{ filled: view && view.messages.length }" aria-label="对话" @scroll="onThreadScroll">
+    <section v-if="!view || view.preparing || !view.messages.length" class="thread" aria-label="对话">
       <p v-if="!view" class="empty">正在读取</p>
       <p v-else-if="view.preparing" class="empty">主分支还在准备。</p>
-      <p v-else-if="!view.messages.length" class="empty">还没有。</p>
-      <article v-for="item in view?.messages ?? []" :key="item.id" class="turn" :class="item.role">
+      <p v-else class="empty">还没有。</p>
+    </section>
+    <VirtualThread
+      v-else
+      class="thread"
+      aria-label="对话"
+      :items="view.messages"
+      :item-key="homeKey"
+      :gap="8"
+      :pinned="stickToBottom"
+      @scroll="onThreadScroll"
+    >
+      <template #default="{ item }">
+      <article class="turn" :class="item.role">
         <div class="bubble">
           <header>
             <strong>{{ item.role === 'user' ? '你' : 'Helix' }}</strong>
@@ -346,12 +409,13 @@ function html(text: string) {
             <pre v-if="tool.arguments">{{ tool.arguments }}</pre>
             <pre v-if="tool.observation">{{ tool.observation }}</pre>
           </details>
-          <p v-if="item.role === 'assistant' && item.status === 'running'" class="wait">正在执行{{ subject(item) ? ` ${subject(item)}` : '' }}</p>
+          <p v-if="item.role === 'assistant' && item.status === 'running'" class="wait">正在执行{{ subject(item) ? ` ${subject(item)}` : '' }} <span class="elapsed">{{ elapsed(item) }}</span></p>
           <div v-if="item.role === 'assistant' && item.text" class="md" v-html="html(item.text)" />
           <p v-else-if="item.status === 'failed' && !item.text" class="wait">这轮没有完成。</p>
         </div>
       </article>
-    </section>
+      </template>
+    </VirtualThread>
     <form class="composer" @submit.prevent="submit">
       <ul v-if="files.length" class="pending">
         <li v-for="file in files" :key="file.url">
@@ -375,7 +439,7 @@ function html(text: string) {
         <button type="button" class="quiet" :disabled="locked" @click="fileEl?.click()">{{ uploading ? '正在上传' : '附件' }}</button>
         <input ref="fileEl" class="sr" type="file" multiple @change="pick" />
         <p class="hint">Enter 发送，Shift+Enter 换行</p>
-        <button type="submit" :disabled="!canSend">{{ running ? `正在执行${runningLabel ? ` ${runningLabel}` : ''}` : '发送' }}</button>
+        <button type="submit" :disabled="!canSend">{{ running ? `正在执行${runningLabel ? ` ${runningLabel}` : ''} ${runningElapsed}` : '发送' }}</button>
       </div>
       <p v-if="error" class="error">{{ error }}</p>
     </form>
@@ -519,6 +583,10 @@ h1 {
 .wait {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.elapsed {
+  font-variant-numeric: tabular-nums;
 }
 
 .files,

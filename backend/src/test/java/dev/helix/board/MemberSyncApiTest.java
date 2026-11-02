@@ -111,8 +111,8 @@ class MemberSyncApiTest {
 
 	private static GitlabDirectory directory() {
 		return new GitlabDirectory(
-				List.of(new GitlabDirectory.Person("sync-kept", "新名", List.of("backend")),
-						new GitlabDirectory.Person("sync-new", "新人", List.of("backend"))),
+				List.of(new GitlabDirectory.Person("sync-kept", "新名", List.of("backend"), "maintainer"),
+						new GitlabDirectory.Person("sync-new", "新人", List.of("backend"), "developer")),
 				List.of(new GitlabDirectory.Team("backend", "backend")));
 	}
 

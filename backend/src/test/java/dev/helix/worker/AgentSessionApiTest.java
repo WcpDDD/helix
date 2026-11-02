@@ -82,7 +82,7 @@ class AgentSessionApiTest {
 	void childIssueSessionFollowsTheBoundWorker() throws Exception {
 		var issue = issues.findByGitIssueNumber(22).orElseThrow();
 		workers.save(new WorkerEntity("worker-session", "会话机", Instant.EPOCH));
-		routes.save(new SubtaskRouteEntity(issue.getId(), "worker-session", 1L, "系统", "去做这件事"));
+		routes.save(new SubtaskRouteEntity(issue.getId(), "worker-session", "guide", "系统", "去做这件事"));
 
 		mockMvc.perform(get("/api/issues/22/agent-session"))
 				.andExpect(status().isOk())
@@ -122,7 +122,7 @@ class AgentSessionApiTest {
 			heartbeat("worker-idle", "空闲机", idle.getAddress().getPort());
 			heartbeat("worker-busy", "忙碌机", busy.getAddress().getPort());
 			long projectId = projects.findAll(Sort.by("id")).getFirst().getId();
-			sessions.save(new AgentSessionEntity(projectId, 880010, 0, "worker-busy"));
+			sessions.save(new AgentSessionEntity(projectId, 880010, "", "worker-busy"));
 
 			mockMvc.perform(post("/api/issues/880011/agent-session"))
 					.andExpect(status().isOk())
@@ -191,7 +191,7 @@ class AgentSessionApiTest {
 		try {
 			heartbeat("worker-guide", "说明机", server.getAddress().getPort());
 			long projectId = projects.findAll(Sort.by("id")).getFirst().getId();
-			sessions.save(new AgentSessionEntity(projectId, 880030, 0, "worker-guide"));
+			sessions.save(new AgentSessionEntity(projectId, 880030, "", "worker-guide"));
 			AgentEntity proposal = new AgentEntity(projects.findAll(Sort.by("id")).getFirst(), "guide-proposal", "身份");
 			proposal.retag("proposal");
 			proposal.replaceSkills(List.of("skills/dev-flow/SKILL.md"));
@@ -211,11 +211,11 @@ class AgentSessionApiTest {
 							.content("{\"text\":\"初始化这张提案\"}"))
 					.andExpect(status().isOk())
 					.andExpect(jsonPath("$.assistant.seq").value(2));
-			assertThat(seen.get()).contains("POST /sessions/880030/messages?agent=" + proposal.getId())
+			assertThat(seen.get()).contains("POST /sessions/880030/messages?agent=" + proposal.getName())
 					.contains("初始化这张提案")
 					.contains("\"agentBody\":\"身份\"")
 					.contains("skills/dev-flow/SKILL.md");
-			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, 880030, proposal.getId())).isPresent();
+			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentName(projectId, 880030, proposal.getName())).isPresent();
 
 			AgentEntity review = new AgentEntity(projects.findAll(Sort.by("id")).getFirst(), "guide-review", "审提案");
 			review.retag("proposal-review");
@@ -225,10 +225,10 @@ class AgentSessionApiTest {
 							.content("{\"text\":\"审这张提案\"}"))
 					.andExpect(status().isOk())
 					.andExpect(jsonPath("$.assistant.seq").value(2));
-			assertThat(seen.get()).contains("POST /sessions/880030/messages?agent=" + review.getId())
+			assertThat(seen.get()).contains("POST /sessions/880030/messages?agent=" + review.getName())
 					.contains("审这张提案")
 					.doesNotContain("状态改为");
-			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, 880030, review.getId())).isPresent();
+			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentName(projectId, 880030, review.getName())).isPresent();
 
 			mockMvc.perform(get("/api/workers/worker-guide/issues/880030/agents/proposal/conversations"))
 					.andExpect(status().isOk())
@@ -239,7 +239,7 @@ class AgentSessionApiTest {
 					.andExpect(status().isOk())
 					.andExpect(jsonPath("$.role").value("assistant"))
 					.andExpect(jsonPath("$.parts[0].text").value("我是 proposal"));
-			assertThat(seen.get()).contains("GET /sessions/880030/conversations/2?agent=" + proposal.getId());
+			assertThat(seen.get()).contains("GET /sessions/880030/conversations/2?agent=" + proposal.getName());
 
 			mockMvc.perform(get("/api/workers/worker-guide/issues/880031/agents/proposal/conversations"))
 					.andExpect(status().isNotFound())

@@ -43,7 +43,7 @@ public class AgentPresence {
 			if (run == null || run.issue() <= 0) {
 				continue;
 			}
-			next.put(run.issue() + ":" + run.agentId(), new Run(run.issue(), run.agentId(), until));
+			next.put(run.issue() + ":" + run.agent(), new Run(run.issue(), run.agent(), until));
 		}
 		byWorker.put(workerId.strip(), next);
 	}
@@ -60,10 +60,10 @@ public class AgentPresence {
 		return Optional.empty();
 	}
 
-	public record Reported(int issue, long agentId) {
+	public record Reported(int issue, String agent) {
 	}
 
-	public record Run(int issue, long agentId, Instant until) {
+	public record Run(int issue, String agent, Instant until) {
 	}
 
 }

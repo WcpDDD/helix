@@ -76,6 +76,7 @@ export interface Task {
   startedAt: string
   expectedEndAt: string
   finishedAt: string | null
+  releaseOn?: string | null
   issue: IssueInfo
   issues: TaskIssue[]
   edges: IssueEdge[]

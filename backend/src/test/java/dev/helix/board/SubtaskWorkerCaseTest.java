@@ -158,7 +158,7 @@ class SubtaskWorkerCaseTest {
 		IssueEntity child = issues.save(issue(project, task, false, childNumber, "子任务 " + name, member));
 		AgentEntity agent = agents.save(new AgentEntity(project, "probe-" + suffix,
 				"You work only inside the open workspace. Do the user's file change, then stop."));
-		return new Fixture(child.getId(), agent.getId());
+		return new Fixture(child.getId(), agent.getName());
 	}
 
 	private static IssueEntity issue(ProjectEntity project, TaskEntity task, boolean main, int number, String title,
@@ -167,8 +167,8 @@ class SubtaskWorkerCaseTest {
 				".", ".", ".", ".", null, null, Instant.parse("2026-10-13T00:00:00Z"));
 	}
 
-	private static String schedule(long agentId, String message) {
-		return "{\"agentId\":" + agentId + ",\"message\":" + json(message) + "}";
+	private static String schedule(String agent, String message) {
+		return "{\"agent\":" + json(agent) + ",\"message\":" + json(message) + "}";
 	}
 
 	private static String json(String value) {
@@ -202,7 +202,7 @@ class SubtaskWorkerCaseTest {
 		return new AgentKitProperties(null, model, baseUrl, apiKey, 6, null);
 	}
 
-	private record Fixture(long childId, long agentId) {
+	private record Fixture(long childId, String agentId) {
 	}
 
 }

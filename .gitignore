@@ -4,3 +4,5 @@
 backend/application-local.properties
 backend/helix.db
 backend/target/helix-test.db
+deploy/docker/dist/
+deploy/docker/helix.jar

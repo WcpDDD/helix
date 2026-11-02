@@ -4,7 +4,10 @@ import java.util.List;
 
 import dev.helix.auth.AuthController;
 import dev.helix.auth.GitlabSessionToken;
+import dev.helix.auth.GitlabUser;
 import dev.helix.board.CurrentProject;
+import dev.helix.board.ProjectAccess;
+import dev.helix.board.ProjectEntity;
 import dev.helix.board.SpecCheckout;
 import dev.helix.board.TaskBoardService;
 import dev.helix.board.TaskCreateService;
@@ -20,6 +23,7 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -46,9 +50,11 @@ public class TaskController {
 
 	private final GitlabSessionToken tokens;
 
+	private final ProjectAccess access;
+
 	public TaskController(TaskBoardService taskBoardService, TaskStatusService taskStatusService,
 			WorkspaceSpecService specs, WorkspaceBoard boards, CurrentProject currentProject,
-			TaskCreateService taskCreateService, GitlabSessionToken tokens) {
+			TaskCreateService taskCreateService, GitlabSessionToken tokens, ProjectAccess access) {
 		this.taskBoardService = taskBoardService;
 		this.taskStatusService = taskStatusService;
 		this.specs = specs;
@@ -56,6 +62,7 @@ public class TaskController {
 		this.currentProject = currentProject;
 		this.taskCreateService = taskCreateService;
 		this.tokens = tokens;
+		this.access = access;
 	}
 
 	@PostMapping("/tasks")
@@ -93,6 +100,15 @@ public class TaskController {
 		}
 	}
 
+	@PutMapping("/tasks/{code}/release")
+	public ReleaseResponse schedule(@PathVariable int code, @RequestBody ReleaseRequest request, HttpSession session) {
+		ProjectEntity project = currentProject.resolve(session);
+		String token = tokens.require(session);
+		access.requireMaintainer(token, project, user(session));
+		String releaseOn = taskStatusService.schedule(project.getId(), code, request.releaseOn());
+		return new ReleaseResponse(releaseOn);
+	}
+
 	@GetMapping("/tasks/{code}/spec")
 	public SpecCheckout spec(@PathVariable int code, HttpSession session) {
 		return specs.checkout(currentProject.resolve(session).getId(), code);
@@ -102,10 +118,17 @@ public class TaskController {
 	public ResponseEntity<StatusResponse> transition(@PathVariable int code, @RequestBody StatusRequest request,
 			HttpSession session) {
 		TaskStatusService.Transition result = taskStatusService.transition(tokens.require(session),
-				currentProject.resolve(session).getId(), code, request.status());
-		StatusResponse body = new StatusResponse(result.status(), result.stage());
+				currentProject.resolve(session).getId(), code, request.status(), request.releaseOn());
+		StatusResponse body = new StatusResponse(result.status(), result.stage(), result.releaseOn());
 		HttpStatus http = result.synced() ? HttpStatus.OK : HttpStatus.CONFLICT;
 		return ResponseEntity.status(http).body(body);
+	}
+
+	private static GitlabUser user(HttpSession session) {
+		if (session == null || !(session.getAttribute(AuthController.SESSION_USER) instanceof GitlabUser user)) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
+		}
+		return user;
 	}
 
 	private static byte[] bytes(MultipartFile file) {
@@ -130,10 +153,16 @@ public class TaskController {
 	public record CreatedTask(String code, String url) {
 	}
 
-	public record StatusRequest(String status) {
+	public record StatusRequest(String status, String releaseOn) {
 	}
 
-	public record StatusResponse(String status, String stage) {
+	public record StatusResponse(String status, String stage, String releaseOn) {
+	}
+
+	public record ReleaseRequest(String releaseOn) {
+	}
+
+	public record ReleaseResponse(String releaseOn) {
 	}
 
 }

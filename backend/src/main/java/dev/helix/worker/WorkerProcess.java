@@ -41,11 +41,11 @@ public final class WorkerProcess {
 		WorkerSessions sessions = new WorkerSessions(root, System.getenv(), (thread, message, workspace, gitlab, sink, profile) -> runtime.begin(
 				thread, instructions(profile.body(), issueOf(workspace), server, id), id, message, workspace, gitlab, sink,
 				"", profile.skills()));
-		HttpServer http = HttpServer.create(new InetSocketAddress("127.0.0.1", port), 0);
+		HttpServer http = HttpServer.create(new InetSocketAddress(setting("HELIX_WORKER_BIND", "127.0.0.1"), port), 0);
 		http.setExecutor(Executors.newVirtualThreadPerTaskExecutor());
 		http.createContext("/", exchange -> WorkerGateway.handle(exchange, sessions));
 		http.start();
-		String address = "http://127.0.0.1:" + http.getAddress().getPort();
+		String address = advertised(setting("HELIX_WORKER_ADDRESS", ""), http.getAddress().getPort());
 		Runtime.getRuntime().addShutdownHook(new Thread(() -> http.stop(0)));
 		HttpClient client = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
 		System.out.println("worker " + id + " 监听 " + address);
@@ -142,6 +142,17 @@ public final class WorkerProcess {
 		return false;
 	}
 
+	static String advertised(String configured, int port) {
+		if (configured == null || configured.isBlank()) {
+			return "http://127.0.0.1:" + port;
+		}
+		String text = configured.strip();
+		while (text.endsWith("/")) {
+			text = text.substring(0, text.length() - 1);
+		}
+		return text;
+	}
+
 	static String heartbeatJson(String id, String name, String address, List<WorkerSessions.Run> runs) {
 		StringBuilder body = new StringBuilder();
 		body.append("{\"id\":\"").append(json(id)).append("\",\"name\":\"").append(json(name)).append("\",\"address\":\"")
@@ -152,7 +163,7 @@ public final class WorkerProcess {
 					body.append(',');
 				}
 				WorkerSessions.Run run = runs.get(index);
-				body.append("{\"issue\":").append(run.issue()).append(",\"agentId\":").append(run.agentId()).append('}');
+				body.append("{\"issue\":").append(run.issue()).append(",\"agent\":\"").append(json(run.agentId())).append("\"}");
 			}
 		}
 		body.append("]}");

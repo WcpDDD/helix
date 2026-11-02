@@ -41,7 +41,7 @@ public class MockRuntime {
 	public Hold hold(long projectId, int iid, AgentEntity agent) {
 		String tag = agent.getTag() == null ? agent.getName() : agent.getTag();
 		Instant now = clock.instant();
-		Lease created = new Lease(tag, agent.getId() == null ? 0L : agent.getId(), now.plus(LEASE));
+		Lease created = new Lease(tag, now.plus(LEASE));
 		Lease kept = leases.compute(key(projectId, iid, tag),
 				(ignored, current) -> current != null && current.until().isAfter(now) ? current : created);
 		return new Hold(kept, kept == created);
@@ -80,9 +80,6 @@ public class MockRuntime {
 				}
 				String tag = agent.getTag() == null ? agent.getName() : agent.getTag();
 				text.append("- ").append(tag);
-				if (agent.getId() != null) {
-					text.append("（id ").append(agent.getId()).append('）');
-				}
 				Optional<Lease> lease = active(projectId, iid, tag);
 				if (lease.isPresent()) {
 					text.append("：运行中，到 ").append(format(lease.get().until())).append('\n');
@@ -115,7 +112,7 @@ public class MockRuntime {
 		return projectId + ":" + iid + ":" + tag;
 	}
 
-	public record Lease(String tag, long agentId, Instant until) {
+	public record Lease(String tag, Instant until) {
 	}
 
 	public record Hold(Lease lease, boolean started) {

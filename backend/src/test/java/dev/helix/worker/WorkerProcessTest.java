@@ -20,12 +20,19 @@ class WorkerProcessTest {
 	}
 
 	@Test
+	void advertisesTheConfiguredAddressAndKeepsLoopbackForALocalWorker() {
+		assertThat(WorkerProcess.advertised("", 8091)).isEqualTo("http://127.0.0.1:8091");
+		assertThat(WorkerProcess.advertised("http://helix-worker.helix.svc.cluster.local:8091/", 8091))
+				.isEqualTo("http://helix-worker.helix.svc.cluster.local:8091");
+	}
+
+	@Test
 	void theHeartbeatNamesTheAgentsStillRunning() {
 		String body = WorkerProcess.heartbeatJson("worker-local", "本机", "http://127.0.0.1:8091",
-				List.of(new WorkerSessions.Run(235, 2L)));
+				List.of(new WorkerSessions.Run(235, "developer")));
 
 		assertThat(body).contains("\"issue\":235");
-		assertThat(body).contains("\"agentId\":2");
+		assertThat(body).contains("\"agent\":\"developer\"");
 	}
 
 }

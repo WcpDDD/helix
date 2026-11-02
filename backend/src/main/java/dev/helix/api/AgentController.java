@@ -41,7 +41,7 @@ public class AgentController {
 	@GetMapping
 	public List<AgentView> list(HttpSession session) {
 		requireUser(session);
-		return agents.list(currentProject.resolve(session));
+		return agents.list(currentProject.resolve(session), requireUser(session).username());
 	}
 
 	@PostMapping
@@ -50,16 +50,16 @@ public class AgentController {
 		return agents.create(currentProject.resolve(session), draft);
 	}
 
-	@PutMapping("/{id}")
-	public AgentView update(@PathVariable long id, @RequestBody AgentDraft draft, HttpSession session) {
+	@PutMapping("/{name}")
+	public AgentView update(@PathVariable String name, @RequestBody AgentDraft draft, HttpSession session) {
 		requireUser(session);
-		return agents.update(currentProject.resolve(session), id, draft);
+		return agents.update(currentProject.resolve(session), name, draft);
 	}
 
-	@DeleteMapping("/{id}")
-	public void delete(@PathVariable long id, HttpSession session) {
+	@DeleteMapping("/{name}")
+	public void delete(@PathVariable String name, HttpSession session) {
 		requireUser(session);
-		agents.delete(currentProject.resolve(session), id);
+		agents.delete(currentProject.resolve(session), name);
 	}
 
 	@ExceptionHandler(ResponseStatusException.class)

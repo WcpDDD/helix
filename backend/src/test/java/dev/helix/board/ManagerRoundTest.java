@@ -33,18 +33,17 @@ class ManagerRoundTest {
 		setId(project, 3L);
 		AgentEntity manager = new AgentEntity(project, "manager", "你维护这张 issue 的状态，只调度。");
 		manager.retag("manager");
-		setAgentId(manager, 8L);
 		when(repository.findWithSkillsByTag(3L, "manager")).thenReturn(java.util.Optional.of(manager));
-		when(sessions.create(3L, 232, 8L)).thenReturn(new IssueAgentView(8L, "manager", "manager", true, true, "worker-local", "本机"));
+		when(sessions.create(3L, 232, "manager")).thenReturn(new IssueAgentView("manager", "manager", true, true, "worker-local", "本机"));
 		ScheduleLog journal = new ScheduleLog(Path.of("target", "manager-ask-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
 		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, new MockRuntime(), new AgentPresence(Duration.ofSeconds(15)), journal);
 
 		analysis.analyze("tok", project, 232, List.of("ai/managed", "type/feature"));
 		analysis.analyze("tok", project, 232, List.of("ai/managed", "type/feature"));
 
-		verify(sessions, times(2)).say(eq(3L), eq(232), eq(8L), contains("做这一轮。"));
-		verify(sessions, never()).say(eq(3L), eq(232), eq(8L), contains("描述"));
-		verify(sessions, never()).say(eq(3L), eq(232), eq(8L), contains("评论"));
+		verify(sessions, times(2)).say(eq(3L), eq(232), eq("manager"), contains("做这一轮。"));
+		verify(sessions, never()).say(eq(3L), eq(232), eq("manager"), contains("描述"));
+		verify(sessions, never()).say(eq(3L), eq(232), eq("manager"), contains("评论"));
 		assertThat(journal.read("schedule.jsonl", 10).records()).filteredOn(row -> "ask".equals(row.get("action"))).hasSize(2);
 	}
 
@@ -56,7 +55,6 @@ class ManagerRoundTest {
 		setId(project, 3L);
 		AgentEntity developer = new AgentEntity(project, "developer", "你是 developer。");
 		developer.retag("developer");
-		setAgentId(developer, 5L);
 		MockRuntime runtime = new MockRuntime();
 		runtime.hold(3L, 232, developer);
 		ScheduleLog journal = new ScheduleLog(Path.of("target", "manager-busy-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
@@ -64,8 +62,8 @@ class ManagerRoundTest {
 
 		analysis.analyze("tok", project, 232, List.of("ai/managed"));
 
-		verify(sessions, never()).create(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyLong());
-		verify(sessions, never()).say(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyLong(), anyString());
+		verify(sessions, never()).create(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyString());
+		verify(sessions, never()).say(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyString(), anyString());
 	}
 
 	@Test
@@ -76,16 +74,15 @@ class ManagerRoundTest {
 		setId(project, 3L);
 		AgentEntity proposal = new AgentEntity(project, "proposal", "你写提案。");
 		proposal.retag("proposal");
-		setAgentId(proposal, 2L);
-		when(repository.findWithSkillsById(2L, 3L)).thenReturn(java.util.Optional.of(proposal));
+		when(repository.findWithSkillsByName(3L, "proposal")).thenReturn(java.util.Optional.of(proposal));
 		AgentPresence presence = new AgentPresence(Duration.ofSeconds(15));
-		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, 2L)));
+		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, "proposal")));
 		ScheduleLog journal = new ScheduleLog(Path.of("target", "manager-live-" + System.nanoTime()), ScheduleLog.MAX_BYTES);
 		ManagerAnalysis analysis = new ManagerAnalysis(repository, sessions, new MockRuntime(), presence, journal);
 
 		analysis.analyze("tok", project, 235, List.of("ai/managed"));
 
-		verify(sessions, never()).say(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyLong(), anyString());
+		verify(sessions, never()).say(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyString(), anyString());
 		assertThat(journal.read("schedule.jsonl", 10).records()).filteredOn(row -> "stop".equals(row.get("action"))).isNotEmpty();
 	}
 
@@ -100,7 +97,7 @@ class ManagerRoundTest {
 
 		analysis.analyze("tok", project, 232, List.of("ai/managed", "ai/hitl"));
 
-		verify(sessions, never()).say(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyLong(), anyString());
+		verify(sessions, never()).say(anyLong(), org.mockito.ArgumentMatchers.anyInt(), anyString(), anyString());
 		assertThat(journal.read("schedule.jsonl", 10).records()).filteredOn(row -> "stop".equals(row.get("action")))
 				.singleElement()
 				.satisfies(row -> assertThat(row.get("note").toString()).contains("已经派给人"));

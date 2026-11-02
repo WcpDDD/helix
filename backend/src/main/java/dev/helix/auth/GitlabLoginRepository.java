@@ -8,6 +8,12 @@ public interface GitlabLoginRepository extends JpaRepository<GitlabLoginEntity, 
 
 	Optional<GitlabLoginEntity> findByGitlabUserId(long gitlabUserId);
 
+	Optional<GitlabLoginEntity> findByAccessToken(String accessToken);
+
 	Optional<GitlabLoginEntity> findFirstByOrderByUpdatedAtDesc();
+
+	Optional<GitlabLoginEntity> findByUsername(String username);
+
+	Optional<GitlabLoginEntity> findFirstByLdapUid(String ldapUid);
 
 }

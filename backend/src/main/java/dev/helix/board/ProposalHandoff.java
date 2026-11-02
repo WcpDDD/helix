@@ -37,10 +37,10 @@ public class ProposalHandoff {
 
 	public void hand(ProjectEntity project, int iid) {
 		AgentEntity proposal = proposal(project);
-		sessions.create(project.getId(), iid, proposal.getId());
+		sessions.create(project.getId(), iid, proposal.getName());
 		ObjectNode body = json.createObjectNode();
 		body.put("text", "读取这张 issue，按提案规范把提案写回来。");
-		sessions.say(project.getId(), iid, proposal.getId(), json.writeValueAsString(body));
+		sessions.say(project.getId(), iid, proposal.getName(), json.writeValueAsString(body));
 		journal.write("handoff", Map.of("project", project.getName(), "issue", iid, "tag", "proposal", "note", "交给 proposal 的会话。"));
 	}
 

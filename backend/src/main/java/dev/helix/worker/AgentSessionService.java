@@ -36,22 +36,31 @@ public class AgentSessionService {
 
 	private final AgentRepository definitions;
 
+	private final dev.helix.board.AgentAudience audience;
+
+	private final dev.helix.auth.LdapAccountService ldap;
+
+	private final dev.helix.auth.GitlabGitEnv git;
+
 	private final JsonMapper json = new JsonMapper();
 
 	public AgentSessionService(AgentSessionRepository sessions, WorkerRegistry registry, WorkerSessionClient workers,
-			WorkerConversationClient conversations, SubtaskScheduler scheduler, AgentRepository definitions) {
+			WorkerConversationClient conversations, SubtaskScheduler scheduler, AgentRepository definitions,
+			dev.helix.board.AgentAudience audience, dev.helix.auth.LdapAccountService ldap,
+			dev.helix.auth.GitlabGitEnv git) {
 		this.sessions = sessions;
 		this.registry = registry;
 		this.workers = workers;
 		this.conversations = conversations;
 		this.scheduler = scheduler;
 		this.definitions = definitions;
+		this.audience = audience;
+		this.ldap = ldap;
+		this.git = git;
 	}
 
 	public AgentSessionView open(long projectId, int number) {
-		return sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, 0)
-				.map(this::view)
-				.orElseGet(() -> scheduler.session(projectId, number));
+		return stored(projectId, number, "").map(this::view).orElseGet(() -> scheduler.session(projectId, number));
 	}
 
 	public AgentSessionView create(long projectId, int number) {
@@ -67,33 +76,39 @@ public class AgentSessionService {
 		CallableWorker worker = registry.lightest(load)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "没有可用的 Worker。"));
 		try {
-			workers.create(worker.address(), profiled("{\"issueNumber\":" + number + ",\"agentId\":0}", null));
+			workers.create(worker.address(), profiled("{\"issueNumber\":" + number + "}", null));
 		}
 		catch (RestClientException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "创建 Agent 会话失败。");
 		}
 		try {
-			return view(sessions.save(new AgentSessionEntity(projectId, number, 0, worker.id())));
+			return view(sessions.save(new AgentSessionEntity(projectId, number, "", worker.id())));
 		}
 		catch (DataIntegrityViolationException exception) {
-			return sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, 0).map(this::view)
+			return stored(projectId, number, "").map(this::view)
 					.orElseThrow(() -> exception);
 		}
 	}
 
-	public List<IssueAgentView> roster(long projectId, int number) {
+	public List<IssueAgentView> roster(long projectId, int number, String username) {
 		return definitions.findByProject_IdOrderByNameAsc(projectId).stream()
+				.filter(agent -> "task".equals(agent.getScope()) && audience.allows(projectId, username, agent.getAccess()))
 				.map(agent -> seat(projectId, number, agent))
 				.toList();
 	}
 
-	public IssueAgentView create(long projectId, int number, long agentId) {
-		if (number <= 0 || agentId <= 0) {
+	public IssueAgentView create(long projectId, int number, String name) {
+		return create(projectId, number, name, null);
+	}
+
+	public IssueAgentView create(long projectId, int number, String name, String username) {
+		if (number <= 0 || name == null || name.isBlank()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "issue 或 agent 不对。");
 		}
-		AgentEntity agent = definitions.findWithSkillsById(agentId, projectId)
+		AgentEntity agent = definitions.findWithSkillsByName(projectId, name)
+				.filter(found -> "task".equals(found.getScope()) && audience.allows(projectId, username, found.getAccess()))
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "没有这个 agent。"));
-		AgentSessionEntity existing = sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agentId).orElse(null);
+		AgentSessionEntity existing = stored(projectId, number, agent.getName()).orElse(null);
 		if (existing != null) {
 			return seat(agent, existing);
 		}
@@ -102,16 +117,16 @@ public class AgentSessionService {
 		CallableWorker worker = registry.lightest(load)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "没有可用的 Worker。"));
 		try {
-			workers.create(worker.address(), profiled("{\"issueNumber\":" + number + ",\"agentId\":" + agentId + "}", agent));
+			workers.create(worker.address(), profiled("{\"issueNumber\":" + number + ",\"agent\":\"" + escape(agent.getName()) + "\"}", agent));
 		}
 		catch (RestClientException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "创建 Agent 会话失败。");
 		}
 		try {
-			return seat(agent, sessions.save(new AgentSessionEntity(projectId, number, agentId, worker.id())));
+			return seat(agent, sessions.save(new AgentSessionEntity(projectId, number, agent.getName(), worker.id())));
 		}
 		catch (DataIntegrityViolationException exception) {
-			return sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agentId)
+			return stored(projectId, number, agent.getName())
 					.map(saved -> seat(agent, saved))
 					.orElseThrow(() -> exception);
 		}
@@ -132,22 +147,22 @@ public class AgentSessionService {
 		long projectId = project(workerId, number);
 		AgentEntity agent = agent(projectId, agentKey);
 		String payload = profiled("{\"text\":\"" + escape(text) + "\"}", agent);
-		AgentSessionEntity existing = sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agent.getId()).orElse(null);
+		AgentSessionEntity existing = stored(projectId, number, agent.getName()).orElse(null);
 		if (existing != null) {
 			CallableWorker worker = registry.live(existing.getWorkerId())
 					.orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "绑定的 Worker 不存活，会话已中断。"));
-			return accepted(conversations.post(worker.address(), messagePath(number, agent.getId()), payload), "任务没有派出去。");
+			return accepted(conversations.post(worker.address(), messagePath(number, agent.getName()), payload), "任务没有派出去。");
 		}
 		Map<String, Long> load = sessions.findAll().stream()
 				.collect(Collectors.groupingBy(AgentSessionEntity::getWorkerId, Collectors.counting()));
 		CallableWorker worker = registry.lightest(load)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "没有可用的 Worker。"));
-		String response = accepted(conversations.post(worker.address(), messagePath(number, agent.getId()), payload), "任务没有派出去。");
+		String response = accepted(conversations.post(worker.address(), messagePath(number, agent.getName()), payload), "任务没有派出去。");
 		try {
-			sessions.save(new AgentSessionEntity(projectId, number, agent.getId(), worker.id()));
+			sessions.save(new AgentSessionEntity(projectId, number, agent.getName(), worker.id()));
 		}
 		catch (DataIntegrityViolationException exception) {
-			AgentSessionEntity saved = sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agent.getId())
+			AgentSessionEntity saved = stored(projectId, number, agent.getName())
 					.orElseThrow(() -> exception);
 			if (!saved.getWorkerId().equals(worker.id())) {
 				throw new ResponseStatusException(HttpStatus.CONFLICT, "这个 agent 已经在别的 worker 上。");
@@ -159,10 +174,10 @@ public class AgentSessionService {
 	public String catalog(String workerId, int number, String agentKey, Long before) {
 		long projectId = project(workerId, number);
 		AgentEntity agent = agent(projectId, agentKey);
-		if (sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agent.getId()).isEmpty()) {
+		if (stored(projectId, number, agent.getName()).isEmpty()) {
 			return "{\"messages\":[],\"hasMore\":false}";
 		}
-		return conversations(projectId, number, agent.getId(), before);
+		return conversations(projectId, number, agent.getName(), before);
 	}
 
 	public String transcript(String workerId, int number, String agentKey, long seq) {
@@ -171,61 +186,61 @@ public class AgentSessionService {
 		}
 		long projectId = project(workerId, number);
 		AgentEntity agent = agent(projectId, agentKey);
-		if (sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agent.getId()).isEmpty()) {
+		if (stored(projectId, number, agent.getName()).isEmpty()) {
 			throw new ResponseStatusException(HttpStatus.NOT_FOUND, "这条对话没有。");
 		}
-		return conversation(projectId, number, agent.getId(), seq);
+		return conversation(projectId, number, agent.getName(), seq);
 	}
 
 	public String conversations(long projectId, int number, Long before) {
-		return conversations(projectId, number, 0, before);
+		return conversations(projectId, number, "", before);
 	}
 
-	public String conversations(long projectId, int number, long agentId, Long before) {
-		String path = "/sessions/" + number + "/conversations" + query(agentId, before);
-		return read(projectId, number, agentId, path);
+	public String conversations(long projectId, int number, String agentName, Long before) {
+		String path = "/sessions/" + number + "/conversations" + query(agentName, before);
+		return read(projectId, number, agentName, path);
 	}
 
 	public String conversation(long projectId, int number, long seq) {
-		return conversation(projectId, number, 0, seq);
+		return conversation(projectId, number, "", seq);
 	}
 
-	public String conversation(long projectId, int number, long agentId, long seq) {
-		return read(projectId, number, agentId, "/sessions/" + number + "/conversations/" + seq + query(agentId, null));
+	public String conversation(long projectId, int number, String agentName, long seq) {
+		return read(projectId, number, agentName, "/sessions/" + number + "/conversations/" + seq + query(agentName, null));
 	}
 
 	public String say(long projectId, int number, String body) {
-		return say(projectId, number, 0, body);
+		return say(projectId, number, "", body);
 	}
 
-	public String say(long projectId, int number, long agentId, String body) {
-		CallableWorker worker = require(projectId, number, agentId);
-		AgentEntity agent = agentId <= 0 ? null : definitions.findWithSkillsById(agentId, projectId).orElse(null);
+	public String say(long projectId, int number, String agentName, String body) {
+		CallableWorker worker = require(projectId, number, agentName);
+		AgentEntity agent = agentName == null || agentName.isBlank() ? null : definitions.findWithSkillsByName(projectId, agentName).orElse(null);
 		WorkerConversationClient.Exchange exchange = conversations.post(worker.address(),
-				"/sessions/" + number + "/messages" + query(agentId, null), profiled(body, agent));
+				"/sessions/" + number + "/messages" + query(agentName, null), profiled(body, agent));
 		return accepted(exchange, "消息没有送出去。");
 	}
 
 	public String file(long projectId, int number, String path) {
-		return file(projectId, number, 0, path);
+		return file(projectId, number, "", path);
 	}
 
-	public String file(long projectId, int number, long agentId, String path) {
+	public String file(long projectId, int number, String agentName, String path) {
 		String encoded = java.net.URLEncoder.encode(path == null ? "" : path, java.nio.charset.StandardCharsets.UTF_8);
-		String query = query(agentId, null);
+		String query = query(agentName, null);
 		String joiner = query.isEmpty() ? "?" : "&";
-		return read(projectId, number, agentId, "/sessions/" + number + "/files" + query + joiner + "path=" + encoded);
+		return read(projectId, number, agentName, "/sessions/" + number + "/files" + query + joiner + "path=" + encoded);
 	}
 
 	public void stream(long projectId, int number, long seq, java.io.OutputStream out) {
-		stream(projectId, number, 0, seq, out);
+		stream(projectId, number, "", seq, out);
 	}
 
-	public void stream(long projectId, int number, long agentId, long seq, java.io.OutputStream out) {
-		CallableWorker worker = require(projectId, number, agentId);
+	public void stream(long projectId, int number, String agentName, long seq, java.io.OutputStream out) {
+		CallableWorker worker = require(projectId, number, agentName);
 		try {
 			conversations.pipe(worker.address(),
-					"/sessions/" + number + "/conversations/" + seq + "/stream" + query(agentId, null), out);
+					"/sessions/" + number + "/conversations/" + seq + "/stream" + query(agentName, null), out);
 		}
 		catch (java.io.IOException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, detail(exception.getMessage(), "对话没有读到。"));
@@ -233,11 +248,11 @@ public class AgentSessionService {
 	}
 
 	private String read(long projectId, int number, String path) {
-		return read(projectId, number, 0, path);
+		return read(projectId, number, "", path);
 	}
 
-	private String read(long projectId, int number, long agentId, String path) {
-		CallableWorker worker = require(projectId, number, agentId);
+	private String read(long projectId, int number, String agentName, String path) {
+		CallableWorker worker = require(projectId, number, agentName);
 		return accepted(conversations.get(worker.address(), path), "对话没有读到。");
 	}
 
@@ -257,18 +272,8 @@ public class AgentSessionService {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "没有这个 agent。");
 		}
 		String key = agentKey.strip();
-		if (key.chars().allMatch(Character::isDigit)) {
-			long id;
-			try {
-				id = Long.parseLong(key);
-			}
-			catch (NumberFormatException exception) {
-				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "没有这个 agent。");
-			}
-			return definitions.findWithSkillsById(id, projectId)
-					.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "没有这个 agent。"));
-		}
-		return definitions.findWithSkillsByTag(projectId, key)
+		return definitions.findWithSkillsByName(projectId, key)
+				.or(() -> definitions.findWithSkillsByTag(projectId, key))
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "没有这个 agent。"));
 	}
 
@@ -327,6 +332,12 @@ public class AgentSessionService {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "消息格式不对。");
 		}
 		node.put("agentBody", agent == null || agent.getBody() == null ? "" : agent.getBody());
+		Map<String, String> userEnv = new java.util.LinkedHashMap<>(ldap.env());
+		userEnv.putAll(git.current());
+		if (!userEnv.isEmpty()) {
+			ObjectNode vars = node.putObject("userEnv");
+			userEnv.forEach(vars::put);
+		}
 		ArrayNode skills = node.putArray("skills");
 		if (agent != null) {
 			for (AgentSkillEntity skill : agent.getSkills()) {
@@ -339,16 +350,29 @@ public class AgentSessionService {
 		return json.writeValueAsString(node);
 	}
 
-	private static String messagePath(int number, long agentId) {
-		return "/sessions/" + number + "/messages?agent=" + agentId;
+	private static String messagePath(int number, String agentName) {
+		return "/sessions/" + number + "/messages?agent=" + encode(agentName);
+	}
+
+	private static String encode(String value) {
+		return java.net.URLEncoder.encode(value == null ? "" : value, java.nio.charset.StandardCharsets.UTF_8);
 	}
 
 	private static String escape(String value) {
 		return value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\n", "\\n").replace("\r", "\\r");
 	}
 
-	private CallableWorker require(long projectId, int number, long agentId) {
-		AgentSessionEntity session = sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agentId)
+	private java.util.Optional<AgentSessionEntity> stored(long projectId, int number, String agentName) {
+		String key = agentName == null ? "" : agentName;
+		java.util.Optional<AgentSessionEntity> named = sessions.findByProjectIdAndIssueNumberAndAgentName(projectId, number, key);
+		if (named.isPresent() || !key.isEmpty()) {
+			return named;
+		}
+		return sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, 0);
+	}
+
+	private CallableWorker require(long projectId, int number, String agentName) {
+		AgentSessionEntity session = stored(projectId, number, agentName)
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "这张 issue 还没有 Agent 会话。"));
 		return registry.live(session.getWorkerId())
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.SERVICE_UNAVAILABLE, "绑定的 Worker 不存活，会话已中断。"));
@@ -386,10 +410,9 @@ public class AgentSessionService {
 	}
 
 	private IssueAgentView seat(long projectId, int number, AgentEntity agent) {
-		AgentSessionEntity session = sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, agent.getId())
-				.orElse(null);
+		AgentSessionEntity session = stored(projectId, number, agent.getName()).orElse(null);
 		if (session == null) {
-			return new IssueAgentView(agent.getId(), agent.getName(), agent.getTag() == null ? "" : agent.getTag(), false, false, "", "");
+			return new IssueAgentView(agent.getName(), agent.getTag() == null ? "" : agent.getTag(), false, false, "", "");
 		}
 		return seat(agent, session);
 	}
@@ -401,14 +424,14 @@ public class AgentSessionService {
 				.orElse(null);
 		boolean alive = worker != null && worker.alive();
 		String name = worker == null ? "" : worker.name();
-		return new IssueAgentView(agent.getId(), agent.getName(), agent.getTag() == null ? "" : agent.getTag(), true, alive,
+		return new IssueAgentView(agent.getName(), agent.getTag() == null ? "" : agent.getTag(), true, alive,
 				session.getWorkerId(), name);
 	}
 
-	private static String query(long agentId, Long before) {
+	private static String query(String agentName, Long before) {
 		String text = "";
-		if (agentId > 0) {
-			text = "?agent=" + agentId;
+		if (agentName != null && !agentName.isBlank()) {
+			text = "?agent=" + encode(agentName);
 		}
 		if (before != null) {
 			text = text + (text.isEmpty() ? "?" : "&") + "before=" + before;
@@ -416,7 +439,7 @@ public class AgentSessionService {
 		return text;
 	}
 
-	public record IssueAgentView(long agentId, String name, String tag, boolean assigned, boolean alive, String workerId,
+	public record IssueAgentView(String name, String tag, boolean assigned, boolean alive, String workerId,
 			String workerName) {
 	}
 

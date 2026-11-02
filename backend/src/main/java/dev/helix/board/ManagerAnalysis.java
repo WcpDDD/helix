@@ -56,7 +56,7 @@ public class ManagerAnalysis {
 		}
 		Optional<AgentPresence.Run> live = presence.running(iid);
 		if (live.isPresent()) {
-			String who = who(project, live.get().agentId());
+			String who = who(project, live.get().agent());
 			journal.write("coordinate", Map.of("issue", iid, "action", "stop", "tag", who, "note", who + " 还在运行。"));
 			return;
 		}
@@ -75,11 +75,11 @@ public class ManagerAnalysis {
 			return;
 		}
 		try {
-			sessions.create(project.getId(), iid, manager.getId());
+			sessions.create(project.getId(), iid, manager.getName());
 			ObjectNode body = json.createObjectNode();
 			String text = delegated ? "目标：" + goal.strip() + "。做这一轮。" : "做这一轮。";
 			body.put("text", text);
-			sessions.say(project.getId(), iid, manager.getId(), json.writeValueAsString(body));
+			sessions.say(project.getId(), iid, manager.getName(), json.writeValueAsString(body));
 		}
 		catch (ResponseStatusException exception) {
 			String reason = exception.getReason() == null ? "manager 会话没有送出去。" : exception.getReason();
@@ -93,11 +93,11 @@ public class ManagerAnalysis {
 		journal.write("coordinate", Map.of("issue", iid, "action", "ask", "tag", "manager", "note", "交给 manager 的会话。"));
 	}
 
-	private String who(ProjectEntity project, long agentId) {
-		if (agentId <= 0) {
+	private String who(ProjectEntity project, String agentName) {
+		if (agentName == null || agentName.isBlank()) {
 			return "agent";
 		}
-		return agents.findWithSkillsById(agentId, project.getId())
+		return agents.findWithSkillsByName(project.getId(), agentName)
 				.map(agent -> {
 					String tag = agent.getTag();
 					return tag == null || tag.isBlank() ? agent.getName() : tag;

@@ -23,14 +23,13 @@ class ProposalHandoffTest {
 		ProjectEntity project = project();
 		AgentEntity proposal = new AgentEntity(project, "proposal", "审字段。");
 		proposal.retag("proposal");
-		setId(proposal, 8L);
 		when(agents.findWithSkillsByTag(3L, "proposal")).thenReturn(java.util.Optional.of(proposal));
 		ProposalHandoff handoff = new ProposalHandoff(agents, sessions, journal());
 
 		handoff.hand(project, 321);
 
-		verify(sessions).create(3L, 321, 8L);
-		verify(sessions).say(eq(3L), eq(321), eq(8L), contains("按提案规范把提案写回来。"));
+		verify(sessions).create(3L, 321, "proposal");
+		verify(sessions).say(eq(3L), eq(321), eq("proposal"), contains("按提案规范把提案写回来。"));
 	}
 
 	@Test

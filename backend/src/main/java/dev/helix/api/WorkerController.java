@@ -6,6 +6,8 @@ import java.util.Map;
 import tools.jackson.databind.JsonNode;
 import tools.jackson.databind.json.JsonMapper;
 
+import dev.helix.auth.AuthController;
+import dev.helix.auth.GitlabUser;
 import dev.helix.board.CurrentProject;
 import dev.helix.worker.AgentPresence;
 import dev.helix.worker.AgentSessionService;
@@ -75,24 +77,27 @@ public class WorkerController {
 
 	@GetMapping("/issues/{number}/agent-sessions")
 	public List<AgentSessionService.IssueAgentView> roster(@PathVariable int number, HttpSession session) {
-		return agentSessions.roster(currentProject.resolve(session).getId(), number);
+		GitlabUser user = user(session);
+		return agentSessions.roster(currentProject.resolve(session).getId(), number, user == null ? "" : user.username());
 	}
 
-	@PostMapping("/issues/{number}/agents/{agentId}/session")
-	public ResponseEntity<?> createAgent(@PathVariable int number, @PathVariable long agentId, HttpSession session) {
+	@PostMapping("/issues/{number}/agents/{name}/session")
+	public ResponseEntity<?> createAgent(@PathVariable int number, @PathVariable String name, HttpSession session) {
 		try {
-			return ResponseEntity.ok(agentSessions.create(currentProject.resolve(session).getId(), number, agentId));
+			GitlabUser user = user(session);
+			return ResponseEntity.ok(agentSessions.create(currentProject.resolve(session).getId(), number, name,
+					user == null ? "" : user.username()));
 		}
 		catch (ResponseStatusException exception) {
 			return failure(exception);
 		}
 	}
 
-	@GetMapping("/issues/{number}/agents/{agentId}/conversations")
-	public ResponseEntity<?> agentConversations(@PathVariable int number, @PathVariable long agentId,
+	@GetMapping("/issues/{number}/agents/{name}/conversations")
+	public ResponseEntity<?> agentConversations(@PathVariable int number, @PathVariable String name,
 			@RequestParam(required = false) Long before, HttpSession session) {
 		try {
-			String body = agentSessions.conversations(currentProject.resolve(session).getId(), number, agentId, before);
+			String body = agentSessions.conversations(currentProject.resolve(session).getId(), number, name, before);
 			return json(body);
 		}
 		catch (ResponseStatusException exception) {
@@ -100,11 +105,11 @@ public class WorkerController {
 		}
 	}
 
-	@GetMapping("/issues/{number}/agents/{agentId}/conversations/{seq}")
-	public ResponseEntity<?> agentConversation(@PathVariable int number, @PathVariable long agentId, @PathVariable long seq,
+	@GetMapping("/issues/{number}/agents/{name}/conversations/{seq}")
+	public ResponseEntity<?> agentConversation(@PathVariable int number, @PathVariable String name, @PathVariable long seq,
 			HttpSession session) {
 		try {
-			String body = agentSessions.conversation(currentProject.resolve(session).getId(), number, agentId, seq);
+			String body = agentSessions.conversation(currentProject.resolve(session).getId(), number, name, seq);
 			return json(body);
 		}
 		catch (ResponseStatusException exception) {
@@ -112,11 +117,11 @@ public class WorkerController {
 		}
 	}
 
-	@PostMapping("/issues/{number}/agents/{agentId}/messages")
-	public ResponseEntity<?> agentSay(@PathVariable int number, @PathVariable long agentId, @RequestBody String body,
+	@PostMapping("/issues/{number}/agents/{name}/messages")
+	public ResponseEntity<?> agentSay(@PathVariable int number, @PathVariable String name, @RequestBody String body,
 			HttpSession session) {
 		try {
-			String response = agentSessions.say(currentProject.resolve(session).getId(), number, agentId, body);
+			String response = agentSessions.say(currentProject.resolve(session).getId(), number, name, body);
 			return json(response);
 		}
 		catch (ResponseStatusException exception) {
@@ -124,11 +129,11 @@ public class WorkerController {
 		}
 	}
 
-	@GetMapping("/issues/{number}/agents/{agentId}/files")
-	public ResponseEntity<?> agentFile(@PathVariable int number, @PathVariable long agentId,
+	@GetMapping("/issues/{number}/agents/{name}/files")
+	public ResponseEntity<?> agentFile(@PathVariable int number, @PathVariable String name,
 			@RequestParam(required = false) String path, HttpSession session) {
 		try {
-			String body = agentSessions.file(currentProject.resolve(session).getId(), number, agentId, path);
+			String body = agentSessions.file(currentProject.resolve(session).getId(), number, name, path);
 			return json(body);
 		}
 		catch (ResponseStatusException exception) {
@@ -136,8 +141,8 @@ public class WorkerController {
 		}
 	}
 
-	@GetMapping(value = "/issues/{number}/agents/{agentId}/conversations/{seq}/stream", produces = "text/event-stream")
-	public void agentStream(@PathVariable int number, @PathVariable long agentId, @PathVariable long seq, HttpSession session,
+	@GetMapping(value = "/issues/{number}/agents/{name}/conversations/{seq}/stream", produces = "text/event-stream")
+	public void agentStream(@PathVariable int number, @PathVariable String name, @PathVariable long seq, HttpSession session,
 			jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
 		response.setCharacterEncoding("UTF-8");
 		response.setContentType("text/event-stream");
@@ -145,7 +150,7 @@ public class WorkerController {
 		response.setHeader("X-Accel-Buffering", "no");
 		response.setBufferSize(1);
 		try {
-			agentSessions.stream(currentProject.resolve(session).getId(), number, agentId, seq, flushing(response));
+			agentSessions.stream(currentProject.resolve(session).getId(), number, name, seq, flushing(response));
 		}
 		catch (ResponseStatusException exception) {
 			if (response.isCommitted()) {
@@ -313,7 +318,7 @@ public class WorkerController {
 		WorkerView view = registry.heartbeat(id, name, address);
 		if (request != null && request.runs() != null) {
 			presence.replace(id, request.runs().stream()
-					.map(run -> new AgentPresence.Reported(run.issue(), run.agentId()))
+					.map(run -> new AgentPresence.Reported(run.issue(), run.agent()))
 					.toList());
 		}
 		return view;
@@ -341,9 +346,9 @@ public class WorkerController {
 
 	@PostMapping("/subtasks/{issueId}/schedule")
 	public ResponseEntity<ScheduleView> schedule(@PathVariable long issueId, @RequestBody ScheduleRequest request) {
-		long agentId = request == null || request.agentId() == null ? 0 : request.agentId();
+		String agent = request == null ? null : request.agent();
 		String message = request == null ? null : request.message();
-		ScheduleView view = scheduler.schedule(issueId, agentId, message);
+		ScheduleView view = scheduler.schedule(issueId, agent, message);
 		HttpStatus status = "interrupted".equals(view.state()) ? HttpStatus.CONFLICT : HttpStatus.OK;
 		return ResponseEntity.status(status).body(view);
 	}
@@ -354,7 +359,7 @@ public class WorkerController {
 	public record HeartbeatRequest(String id, String name, String address, List<RunReport> runs) {
 	}
 
-	public record RunReport(int issue, long agentId) {
+	public record RunReport(int issue, String agent) {
 	}
 
 	public record BindingRequest(Long issueId, String workspace) {
@@ -363,7 +368,7 @@ public class WorkerController {
 	public record ResultRequest(String phase, String text, String failure) {
 	}
 
-	public record ScheduleRequest(Long agentId, String message) {
+	public record ScheduleRequest(String agent, String message) {
 	}
 
 	private static java.io.OutputStream flushing(jakarta.servlet.http.HttpServletResponse response) throws java.io.IOException {
@@ -385,6 +390,13 @@ public class WorkerController {
 				response.flushBuffer();
 			}
 		};
+	}
+
+	private static GitlabUser user(HttpSession session) {
+		if (session == null || !(session.getAttribute(AuthController.SESSION_USER) instanceof GitlabUser user)) {
+			return null;
+		}
+		return user;
 	}
 
 	private static ResponseEntity<Map<String, String>> failure(ResponseStatusException exception) {

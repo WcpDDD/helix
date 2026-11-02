@@ -10,6 +10,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import dev.helix.board.AgentAccess;
+
 import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import com.fasterxml.jackson.annotation.JsonProperty;
 
@@ -68,9 +70,33 @@ public class GitlabDirectoryClient {
 		for (UserPayload user : people.values()) {
 			String name = user.name() == null || user.name().isBlank() ? user.username() : user.name();
 			directory.add(new GitlabDirectory.Person(user.username(), name,
-					List.copyOf(teamsByLogin.getOrDefault(user.username(), List.of()))));
+					List.copyOf(teamsByLogin.getOrDefault(user.username(), List.of())),
+					AgentAccess.fromLevel(user.accessLevel())));
 		}
 		return new GitlabDirectory(directory, teams);
+	}
+
+	public int accessLevel(String accessToken, String gitHost, String owner, String repo, long userId) {
+		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
+		String url = origin(gitHost) + "/api/v4/projects/" + project + "/members/all/" + userId;
+		try {
+			UserPayload body = http.get()
+					.uri(URI.create(url))
+					.header("Authorization", "Bearer " + accessToken)
+					.retrieve()
+					.body(UserPayload.class);
+			return body == null ? 0 : body.accessLevel();
+		}
+		catch (RestClientResponseException exception) {
+			int status = exception.getStatusCode().value();
+			if (status == 404) {
+				return 0;
+			}
+			throw new GitlabIssueException(status);
+		}
+		catch (RestClientException exception) {
+			throw new GitlabIssueException(502);
+		}
 	}
 
 	private List<UserPayload> groupMembers(String accessToken, String origin, long groupId) {
@@ -129,7 +155,7 @@ public class GitlabDirectoryClient {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)
-	private record UserPayload(String username, String name) {
+	private record UserPayload(String username, String name, @JsonProperty("access_level") int accessLevel) {
 	}
 
 	@JsonIgnoreProperties(ignoreUnknown = true)

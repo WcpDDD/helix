@@ -65,6 +65,14 @@ public class HomeAgentService {
 
 	private final TransactionTemplate transactions;
 
+	private final dev.helix.board.AgentAudience audience;
+
+	private final HomeDelegate delegate;
+
+	private final dev.helix.auth.LdapAccountService ldap;
+
+	private final dev.helix.auth.GitlabGitEnv git;
+
 	private final Path talks;
 
 	private final JsonMapper json = new JsonMapper();
@@ -73,11 +81,15 @@ public class HomeAgentService {
 
 	public HomeAgentService(AgentKitProperties properties, ProjectWorkspaces workspaces, GitlabSessionCredential credential,
 			HomeObjectStore objects, HomeSessionRepository sessions, PlatformTransactionManager transactions,
-			AgentRepository agents, ProjectRepository projects, SampleAgents samples) {
+			AgentRepository agents, ProjectRepository projects, SampleAgents samples, dev.helix.board.AgentAudience audience,
+			dev.helix.auth.LdapAccountService ldap, dev.helix.auth.GitlabGitEnv git) {
 		Path base = Path.of(blank(properties.workspace()) ? System.getProperty("user.home") + "/helix-agents" : properties.workspace());
 		AgentKitRuntime hands = new AgentKitRuntime(properties, base.resolve("home-hands"), objects::openQuietly);
-		HomeDelegate delegate = new HomeDelegate(agents, projects, workspaces, hands);
-		this.runtime = new AgentKitRuntime(properties, base.resolve("home"), () -> null, delegate.tools());
+		this.audience = audience;
+		this.ldap = ldap;
+		this.git = git;
+		this.delegate = new HomeDelegate(agents, projects, workspaces, hands);
+		this.runtime = new AgentKitRuntime(properties, base.resolve("home"), () -> null, this.delegate.tools());
 		this.agents = agents;
 		this.samples = samples;
 		this.properties = properties;
@@ -229,7 +241,13 @@ public class HomeAgentService {
 			urls.add(URI.create(file.url()));
 		}
 		try {
-			runtime.begin(thread, roster(project), user.username(), prompt, workspace, Map.of(), new Sink(project, user, talk), urls);
+			Prepared prepared = roster(project, user);
+			Map<String, String> userEnv = new java.util.LinkedHashMap<>(ldap.env(user.id()));
+			userEnv.putAll(git.forUser(user.id()));
+			delegate.permit(workspace, prepared.names());
+			delegate.variables(workspace, userEnv);
+			delegate.caller(workspace, user.username());
+			runtime.begin(thread, prepared.text(), user.username(), prompt, workspace, userEnv, new Sink(project, user, talk), urls);
 		}
 		catch (RuntimeException exception) {
 			finish(talk, "failed", null, exception.getMessage());
@@ -239,14 +257,25 @@ public class HomeAgentService {
 		return view(project, user, talk);
 	}
 
-	private String roster(ProjectEntity project) {
+	private Prepared roster(ProjectEntity project, GitlabUser user) {
+		if (workspaces.opened(project) != null) {
+			samples.ensure(project);
+		}
+		List<AgentEntity> visible = new java.util.ArrayList<>();
+		for (AgentEntity agent : agents.findByProject_IdOrderByNameAsc(project.getId())) {
+			if ("global".equals(agent.getScope()) && audience.allows(project.getId(), user.username(), agent.getAccess())) {
+				visible.add(agent);
+			}
+		}
 		StringBuilder text = new StringBuilder();
 		text.append("你只负责把用户的请求委托给当前项目里的一个 agent。你没有读文件和执行命令的能力。\n");
 		text.append("必须调用 delegate。agent 只能填下面名单里的名字，task 写清要完成的事。拿到结果后，只把结果告诉用户。\n");
+		text.append("被委托的 agent 没有这段对话的记忆。context 要写它单独做完这件事需要的前情：用户原话、已经做过的事、失败原因和关键结果。不要只写「再试一下」。\n");
 		text.append("用户消息里的附件地址原样填进 uri。被委托的 agent 能识别图片。没有附件就留空。\n");
-		text.append("能对上专职 agent 就交给它，对不上就交给兜底答疑。\n");
+		boolean fallback = visible.stream().anyMatch(agent -> "兜底答疑".equals(agent.getName()));
+		text.append(fallback ? "能对上专职 agent 就交给它，对不上就交给兜底答疑。\n" : "只能交给下面名单里的 agent。对不上就说明没有合适的 agent。\n");
 		text.append("可用 agent：\n");
-		for (AgentEntity agent : agents.findByProject_IdOrderByNameAsc(project.getId())) {
+		for (AgentEntity agent : visible) {
 			text.append("- ").append(agent.getName());
 			String line = firstLine(agent.getBody());
 			if (!line.isEmpty()) {
@@ -254,7 +283,10 @@ public class HomeAgentService {
 			}
 			text.append('\n');
 		}
-		return text.toString();
+		return new Prepared(text.toString(), visible.stream().map(AgentEntity::getName).toList());
+	}
+
+	private record Prepared(String text, List<String> names) {
 	}
 
 	private static String firstLine(String body) {

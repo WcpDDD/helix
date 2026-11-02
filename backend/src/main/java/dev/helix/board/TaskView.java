@@ -15,7 +15,13 @@ public record TaskView(
 		LocalDate finishedAt,
 		IssueSummary issue,
 		List<ChildIssueView> issues,
-		List<EdgeView> edges) {
+		List<EdgeView> edges,
+		LocalDate releaseOn) {
+
+	public TaskView release(LocalDate releaseOn) {
+		return new TaskView(code, description, owner, status, stage, hitl, startedAt, expectedEndAt, finishedAt, issue,
+				issues, edges, releaseOn);
+	}
 
 	public record IssueSummary(
 			String url,

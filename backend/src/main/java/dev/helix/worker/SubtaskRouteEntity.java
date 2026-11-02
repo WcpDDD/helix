@@ -19,6 +19,9 @@ public class SubtaskRouteEntity {
 	@Column(name = "agent_id", nullable = false)
 	private Long agentId;
 
+	@Column(name = "agent_name")
+	private String agentName;
+
 	@Column(name = "system_prompt", nullable = false, columnDefinition = "text")
 	private String systemPrompt;
 
@@ -41,10 +44,11 @@ public class SubtaskRouteEntity {
 	protected SubtaskRouteEntity() {
 	}
 
-	public SubtaskRouteEntity(Long issueId, String workerId, Long agentId, String systemPrompt, String message) {
+	public SubtaskRouteEntity(Long issueId, String workerId, String agentName, String systemPrompt, String message) {
 		this.issueId = issueId;
 		this.workerId = workerId;
-		this.agentId = agentId;
+		this.agentName = agentName == null ? "" : agentName;
+		this.agentId = 0L;
 		this.systemPrompt = systemPrompt;
 		this.message = message;
 		this.routeState = "pending";
@@ -60,6 +64,10 @@ public class SubtaskRouteEntity {
 
 	public Long getAgentId() {
 		return agentId;
+	}
+
+	public String getAgentName() {
+		return agentName == null ? "" : agentName;
 	}
 
 	public String getSystemPrompt() {

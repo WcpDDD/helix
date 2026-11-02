@@ -25,16 +25,20 @@ public class AgentSessionEntity {
 	@Column(name = "agent_id")
 	private Long agentId;
 
+	@Column(name = "agent_name")
+	private String agentName;
+
 	@Column(name = "worker_id", nullable = false)
 	private String workerId;
 
 	protected AgentSessionEntity() {
 	}
 
-	public AgentSessionEntity(long projectId, int issueNumber, long agentId, String workerId) {
+	public AgentSessionEntity(long projectId, int issueNumber, String agentName, String workerId) {
 		this.projectId = projectId;
 		this.issueNumber = issueNumber;
-		this.agentId = agentId;
+		this.agentName = agentName == null ? "" : agentName;
+		this.agentId = this.agentName.isEmpty() ? 0L : null;
 		this.workerId = workerId;
 	}
 
@@ -48,6 +52,10 @@ public class AgentSessionEntity {
 
 	public long getAgentId() {
 		return agentId == null ? 0 : agentId;
+	}
+
+	public String getAgentName() {
+		return agentName == null ? "" : agentName;
 	}
 
 	public String getWorkerId() {

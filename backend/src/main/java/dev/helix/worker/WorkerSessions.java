@@ -16,7 +16,7 @@ public final class WorkerSessions {
 
 	private static final Pattern ISSUE_NUMBER = Pattern.compile("\"issueNumber\"\\s*:\\s*(\\d+)");
 
-	private static final Pattern AGENT_ID = Pattern.compile("\"agentId\"\\s*:\\s*(\\d+)");
+	private static final Pattern AGENT_NAME = Pattern.compile("\"agent\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"");
 
 	private final ConversationBoard board;
 
@@ -39,7 +39,7 @@ public final class WorkerSessions {
 		catch (IllegalArgumentException exception) {
 			return new Result(400, detail("issue 编号不对。"));
 		}
-		long agentId = agentId(body);
+		String agentId = agentName(body);
 		try {
 			return board.open(number, agentId);
 		}
@@ -52,10 +52,10 @@ public final class WorkerSessions {
 	}
 
 	public Result send(int issueNumber, String body) {
-		return send(issueNumber, 0, body);
+		return send(issueNumber, "", body);
 	}
 
-	public Result send(int issueNumber, long agentId, String body) {
+	public Result send(int issueNumber, String agentId, String body) {
 		try {
 			return board.send(issueNumber, agentId, body);
 		}
@@ -66,10 +66,10 @@ public final class WorkerSessions {
 	}
 
 	public Result list(int issueNumber, Long before) {
-		return list(issueNumber, 0, before);
+		return list(issueNumber, "", before);
 	}
 
-	public Result list(int issueNumber, long agentId, Long before) {
+	public Result list(int issueNumber, String agentId, Long before) {
 		try {
 			return board.list(issueNumber, agentId, before);
 		}
@@ -79,10 +79,10 @@ public final class WorkerSessions {
 	}
 
 	public Result content(int issueNumber, long seq) {
-		return content(issueNumber, 0, seq);
+		return content(issueNumber, "", seq);
 	}
 
-	public Result content(int issueNumber, long agentId, long seq) {
+	public Result content(int issueNumber, String agentId, long seq) {
 		try {
 			return board.content(issueNumber, agentId, seq);
 		}
@@ -101,10 +101,10 @@ public final class WorkerSessions {
 	}
 
 	public Result file(int issueNumber, String path) {
-		return file(issueNumber, 0, path);
+		return file(issueNumber, "", path);
 	}
 
-	public Result file(int issueNumber, long agentId, String path) {
+	public Result file(int issueNumber, String agentId, String path) {
 		try {
 			return board.file(issueNumber, agentId, path);
 		}
@@ -114,10 +114,10 @@ public final class WorkerSessions {
 	}
 
 	public void stream(int issueNumber, long seq, OutputStream out) throws IOException {
-		stream(issueNumber, 0, seq, out);
+		stream(issueNumber, "", seq, out);
 	}
 
-	public void stream(int issueNumber, long agentId, long seq, OutputStream out) throws IOException {
+	public void stream(int issueNumber, String agentId, long seq, OutputStream out) throws IOException {
 		board.writeStream(issueNumber, agentId, seq, out);
 	}
 
@@ -141,30 +141,21 @@ public final class WorkerSessions {
 		}
 	}
 
-	static long agentId(String body) {
+	static String agentName(String body) {
 		if (body == null) {
-			return 0;
+			return "";
 		}
-		Matcher matcher = AGENT_ID.matcher(body);
+		Matcher matcher = AGENT_NAME.matcher(body);
 		if (!matcher.find()) {
-			return 0;
+			return "";
 		}
-		try {
-			long agentId = Long.parseLong(matcher.group(1));
-			if (agentId < 0) {
-				throw new IllegalArgumentException();
-			}
-			return agentId;
-		}
-		catch (NumberFormatException exception) {
-			throw new IllegalArgumentException();
-		}
+		return matcher.group(1).replace("\\\"", "\"").replace("\\\\", "\\");
 	}
 
 	public record Result(int status, String body) {
 	}
 
-	public record Run(int issue, long agentId) {
+	public record Run(int issue, String agentId) {
 	}
 
 	@FunctionalInterface

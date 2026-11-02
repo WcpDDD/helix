@@ -306,6 +306,29 @@ public class ProjectWorkspaces {
 		return message == null || message.isBlank() ? fallback : message;
 	}
 
+	public void include(Path directory, String directoryName) {
+		if (directory == null || directoryName == null || directoryName.isBlank()
+				|| !Files.isRegularFile(directory.resolve(".git/info/sparse-checkout"))) {
+			return;
+		}
+		Path listed = directory.resolve(".git/info/sparse-checkout");
+		try {
+			String text = Files.readString(listed);
+			if (text.contains("/" + directoryName + "/") || text.contains("\n" + directoryName + "\n")) {
+				return;
+			}
+		}
+		catch (IOException exception) {
+			return;
+		}
+		try {
+			run(directory, null, "sparse-checkout", "add", "--skip-checks", directoryName);
+		}
+		catch (RuntimeException exception) {
+			log.warn("没有把 {} 纳入工作目录的检出范围：{}", directoryName, exception.getMessage());
+		}
+	}
+
 	public String read(Path directory, String relative) {
 		Path file = inside(directory, relative);
 		if (!Files.isRegularFile(file)) {
@@ -386,7 +409,7 @@ public class ProjectWorkspaces {
 			args.add(remote);
 			args.add(staging.getFileName().toString());
 			run(parent, token, args.toArray(String[]::new));
-			run(staging, token, "sparse-checkout", "set", "skills", "openspec", "worker-init", "docs");
+			run(staging, token, "sparse-checkout", "set", "skills", "openspec", "worker-init", "docs", "agents");
 			if (Files.exists(directory)) {
 				throw new ResponseStatusException(HttpStatus.CONFLICT, "工作目录已经存在，但还不是仓库。");
 			}

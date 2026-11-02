@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -59,10 +60,10 @@ public final class ConversationBoard {
 	}
 
 	public WorkerSessions.Result open(int issueNumber) {
-		return open(issueNumber, 0);
+		return open(issueNumber, "");
 	}
 
-	public WorkerSessions.Result open(int issueNumber, long agentId) {
+	public WorkerSessions.Result open(int issueNumber, String agentId) {
 		IssueTalk talk = talk(issueNumber, agentId);
 		synchronized (talk.lock) {
 			if (!talk.messages.isEmpty() || talk.busy) {
@@ -74,10 +75,10 @@ public final class ConversationBoard {
 	}
 
 	public WorkerSessions.Result send(int issueNumber, String body) {
-		return send(issueNumber, 0, body);
+		return send(issueNumber, "", body);
 	}
 
-	public WorkerSessions.Result send(int issueNumber, long agentId, String body) {
+	public WorkerSessions.Result send(int issueNumber, String agentId, String body) {
 		JsonNode request;
 		try {
 			request = body == null || body.isBlank() ? json.createObjectNode() : json.readTree(body);
@@ -130,7 +131,7 @@ public final class ConversationBoard {
 			prompt = text + "\n\n附件：\n- " + String.join("\n- ", files);
 		}
 		try {
-			start(talk, issueNumber, assistant, prompt, workspace, AgentProfile.read(request));
+			start(talk, issueNumber, assistant, prompt, workspace, AgentProfile.read(request), userEnv(request));
 		}
 		catch (RuntimeException ignored) {
 			// 失败已经写进这条回复。
@@ -144,10 +145,10 @@ public final class ConversationBoard {
 	}
 
 	public WorkerSessions.Result list(int issueNumber, Long before) {
-		return list(issueNumber, 0, before);
+		return list(issueNumber, "", before);
 	}
 
-	public WorkerSessions.Result list(int issueNumber, long agentId, Long before) {
+	public WorkerSessions.Result list(int issueNumber, String agentId, Long before) {
 		IssueTalk talk = talk(issueNumber, agentId);
 		synchronized (talk.lock) {
 			List<ObjectNode> eligible = new ArrayList<>();
@@ -177,10 +178,10 @@ public final class ConversationBoard {
 	}
 
 	public WorkerSessions.Result content(int issueNumber, long seq) {
-		return content(issueNumber, 0, seq);
+		return content(issueNumber, "", seq);
 	}
 
-	public WorkerSessions.Result content(int issueNumber, long agentId, long seq) {
+	public WorkerSessions.Result content(int issueNumber, String agentId, long seq) {
 		IssueTalk talk = talk(issueNumber, agentId);
 		synchronized (talk.lock) {
 			ObjectNode message = message(talk, seq);
@@ -192,10 +193,10 @@ public final class ConversationBoard {
 	}
 
 	public WorkerSessions.Result file(int issueNumber, String path) {
-		return file(issueNumber, 0, path);
+		return file(issueNumber, "", path);
 	}
 
-	public WorkerSessions.Result file(int issueNumber, long agentId, String path) {
+	public WorkerSessions.Result file(int issueNumber, String agentId, String path) {
 		if (path == null || path.isBlank()) {
 			return new WorkerSessions.Result(400, detail("附件路径不对。"));
 		}
@@ -239,10 +240,10 @@ public final class ConversationBoard {
 	}
 
 	public void writeStream(int issueNumber, long seq, OutputStream out) throws IOException {
-		writeStream(issueNumber, 0, seq, out);
+		writeStream(issueNumber, "", seq, out);
 	}
 
-	public void writeStream(int issueNumber, long agentId, long seq, OutputStream out) throws IOException {
+	public void writeStream(int issueNumber, String agentId, long seq, OutputStream out) throws IOException {
 		IssueTalk talk = talk(issueNumber, agentId);
 		BlockingQueue<String> queue = new LinkedBlockingQueue<>();
 		String snapshot;
@@ -293,7 +294,8 @@ public final class ConversationBoard {
 		}
 	}
 
-	private void start(IssueTalk talk, int issueNumber, long assistant, String prompt, Path workspace, AgentProfile profile) {
+	private void start(IssueTalk talk, int issueNumber, long assistant, String prompt, Path workspace, AgentProfile profile,
+			Map<String, String> userEnv) {
 		String threadId;
 		synchronized (talk.lock) {
 			if (talk.threadId == null || talk.threadId.isBlank()) {
@@ -303,8 +305,12 @@ public final class ConversationBoard {
 			threadId = talk.threadId;
 		}
 		AgentProfile turn = profile == null ? new AgentProfile("", List.of()) : profile;
+		Map<String, String> env = new LinkedHashMap<>(IssueWorkspace.gitlab(environment));
+		if (userEnv != null) {
+			env.putAll(userEnv);
+		}
 		try {
-			runner.start(threadId, prompt, workspace, IssueWorkspace.gitlab(environment), new TurnSink(issueNumber, talk.agentId, assistant),
+			runner.start(threadId, prompt, workspace, Map.copyOf(env), new TurnSink(issueNumber, talk.agentId, assistant),
 					turn.resolve(workspace));
 		}
 		catch (RuntimeException exception) {
@@ -340,7 +346,7 @@ public final class ConversationBoard {
 		}
 	}
 
-	private void applyChunk(int issueNumber, long agentId, long seq, ExecutionChunk chunk) {
+	private void applyChunk(int issueNumber, String agentId, long seq, ExecutionChunk chunk) {
 		if (chunk == null) {
 			return;
 		}
@@ -360,7 +366,7 @@ public final class ConversationBoard {
 		}
 	}
 
-	private void applyEvent(int issueNumber, long agentId, long seq, ExecutionEvent event) {
+	private void applyEvent(int issueNumber, String agentId, long seq, ExecutionEvent event) {
 		if (event == null) {
 			return;
 		}
@@ -390,7 +396,7 @@ public final class ConversationBoard {
 		}
 	}
 
-	private void toolStarted(int issueNumber, long agentId, long seq, ExecutionEvent.ToolStarted started) {
+	private void toolStarted(int issueNumber, String agentId, long seq, ExecutionEvent.ToolStarted started) {
 		IssueTalk talk = talk(issueNumber, agentId);
 		synchronized (talk.lock) {
 			ObjectNode message = running(talk, seq);
@@ -414,7 +420,7 @@ public final class ConversationBoard {
 		}
 	}
 
-	private void toolFinished(int issueNumber, long agentId, long seq, ExecutionEvent.ToolFinished finished) {
+	private void toolFinished(int issueNumber, String agentId, long seq, ExecutionEvent.ToolFinished finished) {
 		IssueTalk talk = talk(issueNumber, agentId);
 		synchronized (talk.lock) {
 			ObjectNode message = running(talk, seq);
@@ -435,7 +441,7 @@ public final class ConversationBoard {
 		}
 	}
 
-	private void turnText(int issueNumber, long agentId, long seq, String assistantText) {
+	private void turnText(int issueNumber, String agentId, long seq, String assistantText) {
 		if (assistantText == null || assistantText.isBlank()) {
 			return;
 		}
@@ -460,7 +466,7 @@ public final class ConversationBoard {
 		}
 	}
 
-	private void finish(int issueNumber, long agentId, long seq, String status, String detail) {
+	private void finish(int issueNumber, String agentId, long seq, String status, String detail) {
 		IssueTalk talk = talk(issueNumber, agentId);
 		synchronized (talk.lock) {
 			ObjectNode message = message(talk, seq);
@@ -631,17 +637,15 @@ public final class ConversationBoard {
 		return talk.messages.get(talk.messages.size() - 1).path("seq").asLong() + 1;
 	}
 
-	private IssueTalk talk(int issueNumber, long agentId) {
+	private IssueTalk talk(int issueNumber, String agentId) {
 		if (issueNumber <= 0) {
 			throw new WorkspaceException("issue 编号不对。");
 		}
-		if (agentId < 0) {
-			throw new WorkspaceException("agent 不对。");
-		}
-		return talks.computeIfAbsent(issueNumber + ":" + agentId, key -> load(issueNumber, agentId));
+		String name = agentId == null ? "" : agentId;
+		return talks.computeIfAbsent(issueNumber + ":" + name, key -> load(issueNumber, name));
 	}
 
-	private IssueTalk load(int issueNumber, long agentId) {
+	private IssueTalk load(int issueNumber, String agentId) {
 		IssueTalk talk = new IssueTalk(issueNumber, agentId, json.createArrayNode());
 		Path file = store(talk);
 		if (!Files.isRegularFile(file)) {
@@ -697,10 +701,11 @@ public final class ConversationBoard {
 	}
 
 	private Path store(IssueTalk talk) {
-		if (talk.agentId == 0) {
+		if (talk.agentId == null || talk.agentId.isBlank()) {
 			return root.resolve("conversations").resolve("issue-" + talk.issueNumber + ".json");
 		}
-		return root.resolve("conversations").resolve("issue-" + talk.issueNumber).resolve("agent-" + talk.agentId + ".json");
+		String file = talk.agentId.replace("/", "_").replace("\\", "_");
+		return root.resolve("conversations").resolve("issue-" + talk.issueNumber).resolve("agent-" + file + ".json");
 	}
 
 	private static Path resolve(Path workspace, String path) {
@@ -726,6 +731,28 @@ public final class ConversationBoard {
 		return "{\"detail\":\"" + text.replace("\\", "\\\\").replace("\"", "\\\"") + "\"}";
 	}
 
+	private static Map<String, String> userEnv(JsonNode request) {
+		JsonNode extra = request.get("userEnv");
+		if (extra == null || !extra.isObject()) {
+			return Map.of();
+		}
+		Map<String, String> env = new LinkedHashMap<>();
+		for (Map.Entry<String, JsonNode> field : extra.properties()) {
+			String key = field.getKey();
+			if (!"LDAP_UID".equals(key) && !"LDAP_PASSWORD".equals(key)) {
+				continue;
+			}
+			String value = field.getValue().asString("");
+			if ("LDAP_UID".equals(key)) {
+				value = value.strip();
+			}
+			if (!value.isBlank()) {
+				env.put(key, value);
+			}
+		}
+		return Map.copyOf(env);
+	}
+
 	private static String safe(String message) {
 		if (message == null || message.isBlank()) {
 			return "这轮没有开始。";
@@ -749,11 +776,11 @@ public final class ConversationBoard {
 
 		private final int issueNumber;
 
-		private final long agentId;
+		private final String agentId;
 
 		private final long seq;
 
-		private TurnSink(int issueNumber, long agentId, long seq) {
+		private TurnSink(int issueNumber, String agentId, long seq) {
 			this.issueNumber = issueNumber;
 			this.agentId = agentId;
 			this.seq = seq;
@@ -785,7 +812,7 @@ public final class ConversationBoard {
 
 		private final int issueNumber;
 
-		private final long agentId;
+		private final String agentId;
 
 		private final Object lock = new Object();
 
@@ -797,7 +824,7 @@ public final class ConversationBoard {
 
 		private String threadId;
 
-		private IssueTalk(int issueNumber, long agentId, ArrayNode messages) {
+		private IssueTalk(int issueNumber, String agentId, ArrayNode messages) {
 			this.issueNumber = issueNumber;
 			this.agentId = agentId;
 			this.messages = messages;

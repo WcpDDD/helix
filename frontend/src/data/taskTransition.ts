@@ -5,8 +5,9 @@ export interface TaskTransitionResult {
   status: TaskStatus
   stage: TaskStage
   synced: boolean
+  releaseOn: string | null
 }
 
 export const taskTransitionKey: InjectionKey<
-  (code: string, status: TaskStatus, stage: TaskStage) => Promise<TaskTransitionResult>
+  (code: string, status: TaskStatus, stage: TaskStage, releaseOn?: string | null) => Promise<TaskTransitionResult>
 > = Symbol('taskTransition')

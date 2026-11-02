@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink } from 'vue-router'
-import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, fetchGoal, startGoal, stopGoal, confirmHitl, releaseHitl, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote, type GoalStatus } from '@/api/client'
+import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, fetchGoal, startGoal, stopGoal, confirmHitl, releaseHitl, scheduleRelease, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote, type GoalStatus } from '@/api/client'
 import TaskNext from '@/components/TaskNext.vue'
+import VirtualThread from '@/components/VirtualThread.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
 import { agentTags } from '@/data/agentTags'
 import { renderMarkdown } from '@/markdown'
@@ -17,14 +18,38 @@ import {
 
 const props = defineProps<{
   task: Task
+  canEditRelease?: boolean
 }>()
 
 const emit = defineEmits<{
   close: []
   refresh: []
+  release: [date: string]
 }>()
 
-type ShownMessage = ConversationMessage & { agentId: number; agentName: string; agentTag: string }
+const releaseSaving = ref(false)
+const releaseError = ref('')
+
+async function saveRelease(event: Event) {
+  const input = event.target as HTMLInputElement
+  const value = input.value
+  if (!value || value === (props.task.releaseOn ?? '') || releaseSaving.value) {
+    input.value = props.task.releaseOn ?? ''
+    return
+  }
+  releaseSaving.value = true
+  releaseError.value = ''
+  try {
+    emit('release', await scheduleRelease(props.task.code, value))
+  } catch (error) {
+    releaseError.value = error instanceof Error ? error.message : '预计上线时间没有保存。'
+    input.value = props.task.releaseOn ?? ''
+  } finally {
+    releaseSaving.value = false
+  }
+}
+
+type ShownMessage = ConversationMessage & { agentId: string; agentName: string; agentTag: string }
 type Relay = { fromName: string; fromTag: string }
 
 const pane = ref<'issue' | 'goal' | 'agent'>('issue')
@@ -44,7 +69,7 @@ const hitlCollapsed = ref(false)
 let goalTimer = 0
 const showHitl = computed(() => props.task.hitl && !hitlCleared.value)
 const seats = ref<IssueAgent[]>([])
-const focusAgent = ref<'group' | number>('group')
+const focusAgent = ref<'group' | string>('group')
 const sessionState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const creating = ref(false)
 const createError = ref('')
@@ -56,13 +81,13 @@ const threadState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const draft = ref('')
 const sending = ref(false)
 const sendError = ref('')
-const threadEl = ref<HTMLElement | null>(null)
+const threadEl = ref<{ el: HTMLElement | null } | null>(null)
 const fileView = ref<{ name: string; path: string; text: string; binary: boolean } | null>(null)
 const fileError = ref('')
 let sessionRequest = 0
 let threadRequest = 0
 const streams = new Map<string, EventSource>()
-const currentSeat = computed(() => seats.value.find((seat) => seat.agentId === focusAgent.value) ?? null)
+const currentSeat = computed(() => seats.value.find((seat) => seat.name === focusAgent.value) ?? null)
 const orderedSeats = computed(() =>
   [...seats.value].sort((left, right) => {
     const rank = stageRank(left.tag) - stageRank(right.tag)
@@ -74,7 +99,7 @@ function stageRank(tag: string): number {
   const index = agentTags.indexOf(tag as (typeof agentTags)[number])
   return index < 0 ? agentTags.length : index
 }
-let stickToBottom = true
+const stickToBottom = ref(true)
 const bodyEl = ref<HTMLElement | null>(null)
 const selectedId = ref(defaultIssueId(props.task))
 const selectedEdgeId = ref('')
@@ -160,7 +185,7 @@ async function loadRoster(number: string) {
   }
 }
 
-function selectAgent(id: 'group' | number) {
+function selectAgent(id: 'group' | string) {
   if (focusAgent.value === id) return
   focusAgent.value = id
   void loadView(issueView.value.id)
@@ -178,7 +203,7 @@ async function loadView(number: string) {
     threadState.value = 'ready'
     return
   }
-  await loadThread(number, seat.agentId, seat.name)
+  await loadThread(number, seat.name, seat.name)
 }
 
 async function createSession() {
@@ -189,9 +214,9 @@ async function createSession() {
   createError.value = ''
   try {
     const next = await createIssueAgentSession(number, agentId)
-    const index = seats.value.findIndex((seat) => seat.agentId === agentId)
+    const index = seats.value.findIndex((seat) => seat.name === agentId)
     if (index >= 0) seats.value[index] = next
-    if (next.assigned && next.alive) await loadThread(number, next.agentId, next.name)
+    if (next.assigned && next.alive) await loadThread(number, next.name, next.name)
   } catch (error) {
     createError.value = error instanceof Error && error.message ? error.message : '创建 Agent 会话失败。'
   } finally {
@@ -269,11 +294,11 @@ async function loadHitlReason(code: string) {
     if (request !== hitlLoad || props.task.code !== code) return
     const manager = seats.find((seat) => seat.tag === 'manager' && seat.assigned)
     if (!manager) return
-    const page = await fetchAgentConversations(code, manager.agentId)
+    const page = await fetchAgentConversations(code, manager.name)
     if (request !== hitlLoad || props.task.code !== code) return
     const latest = [...page.messages].reverse().find((item) => item.role === 'assistant' && item.preview)
     if (!latest) return
-    const full = await fetchAgentConversation(code, manager.agentId, latest.seq)
+    const full = await fetchAgentConversation(code, manager.name, latest.seq)
     if (request !== hitlLoad || props.task.code !== code) return
     const text = full.parts.filter((part) => part.kind === 'text' && part.text).map((part) => part.text).join('\n')
     hitlReason.value = text.trim()
@@ -543,16 +568,16 @@ async function pollRoster() {
     const next = await fetchIssueAgents(id)
     if (request !== rosterPollRequest || id !== issueView.value.id) return
     const shape = (list: IssueAgent[]) =>
-      list.map((seat) => [seat.agentId, seat.assigned, seat.alive, seat.workerId].join(':')).join('|')
+      list.map((seat) => [seat.name, seat.assigned, seat.alive, seat.workerId].join(':')).join('|')
     if (shape(next) !== shape(seats.value)) seats.value = next
     if (focusAgent.value === 'group' || threadState.value !== 'ready') return
     const seat = currentSeat.value
     if (!seat?.assigned || !seat.alive) return
-    const page = await fetchAgentConversations(id, seat.agentId)
+    const page = await fetchAgentConversations(id, seat.name)
     if (request !== rosterPollRequest || id !== issueView.value.id) return
     const last = page.messages[page.messages.length - 1]
     if (!last || last.status !== 'running') return
-    const loaded = messages.value.filter((message) => message.agentId === seat.agentId)
+    const loaded = messages.value.filter((message) => message.agentId === seat.name)
     const loadedSeq = loaded.length > 0 ? loaded[loaded.length - 1].seq : 0
     if (last.seq > loadedSeq) void loadView(id)
   }
@@ -640,7 +665,7 @@ async function loadGroup(number: string) {
     messages.value = flat
     hasMore.value = false
     threadState.value = 'ready'
-    stickToBottom = true
+    stickToBottom.value = true
     await nextTick()
     scrollThreadToEnd()
     for (const message of messages.value) {
@@ -653,7 +678,7 @@ async function loadGroup(number: string) {
   }
 }
 
-async function loadThread(number: string, agentId: number, agentName: string) {
+async function loadThread(number: string, agentId: string, agentName: string) {
   const request = ++threadRequest
   closeStream()
   threadState.value = 'loading'
@@ -667,7 +692,7 @@ async function loadThread(number: string, agentId: number, agentName: string) {
     messages.value = full
     hasMore.value = page.hasMore
     threadState.value = 'ready'
-    stickToBottom = true
+    stickToBottom.value = true
     await nextTick()
     scrollThreadToEnd()
     const last = full[full.length - 1]
@@ -681,11 +706,11 @@ async function loadThread(number: string, agentId: number, agentName: string) {
 }
 
 async function readPage(number: string, seat: IssueAgent, before?: number): Promise<ShownMessage[]> {
-  const page = await fetchAgentConversations(number, seat.agentId, before)
-  return Promise.all(page.messages.map((item) => stamp(number, seat.agentId, seat.name, seat.tag, item.seq)))
+  const page = await fetchAgentConversations(number, seat.name, before)
+  return Promise.all(page.messages.map((item) => stamp(number, seat.name, seat.name, seat.tag, item.seq)))
 }
 
-async function stamp(number: string, agentId: number, agentName: string, agentTag: string, seq: number): Promise<ShownMessage> {
+async function stamp(number: string, agentId: string, agentName: string, agentTag: string, seq: number): Promise<ShownMessage> {
   const message = await fetchAgentConversation(number, agentId, seq)
   return { ...message, agentId, agentName, agentTag }
 }
@@ -713,8 +738,8 @@ function indexRelays(list: ShownMessage[]): Map<string, Relay> {
       const raw = `${part.arguments ?? ''}\n${part.observation ?? ''}`
       for (const sent of sentTasks(raw)) {
         const target = seatByKey(sent.target)
-        if (!target || target.agentId === message.agentId || !sent.text) continue
-        found.set(`${target.agentId}\u0000${sent.text}`, { fromName: message.agentName, fromTag: message.agentTag })
+        if (!target || target.name === message.agentId || !sent.text) continue
+        found.set(`${target.name}\u0000${sent.text}`, { fromName: message.agentName, fromTag: message.agentTag })
       }
     }
   }
@@ -722,7 +747,7 @@ function indexRelays(list: ShownMessage[]): Map<string, Relay> {
 }
 
 function seatByKey(key: string): IssueAgent | undefined {
-  if (/^\d+$/.test(key)) return seats.value.find((seat) => String(seat.agentId) === key)
+  if (/^\d+$/.test(key)) return seats.value.find((seat) => String(seat.name) === key)
   return seats.value.find((seat) => seat.tag === key || seat.name === key)
 }
 
@@ -817,12 +842,21 @@ function identity(message: ShownMessage): { mark: string; name: string; tag: str
 }
 
 function byTime(left: ShownMessage, right: ShownMessage): number {
-  return left.createdAt - right.createdAt || left.agentId - right.agentId || left.seq - right.seq
+  return left.createdAt - right.createdAt || left.agentId.localeCompare(right.agentId, 'zh') || left.seq - right.seq
+}
+
+function threadNode(): HTMLElement | null {
+  const value = threadEl.value as { el?: HTMLElement | null } | null
+  return value?.el ?? null
+}
+
+function messageKey(message: ShownMessage) {
+  return `${message.agentId}-${message.seq}`
 }
 
 async function loadOlder() {
   if (focusAgent.value === 'group') return
-  const el = threadEl.value
+  const el = threadNode()
   const oldest = messages.value[0]
   const seat = currentSeat.value
   if (!el || !oldest || !seat || !hasMore.value || loadingOlder.value) return
@@ -831,9 +865,9 @@ async function loadOlder() {
   loadingOlder.value = true
   const beforeHeight = el.scrollHeight
   try {
-    const page = await fetchAgentConversations(number, seat.agentId, oldest.seq)
+    const page = await fetchAgentConversations(number, seat.name, oldest.seq)
     if (request !== threadRequest) return
-    const full = await Promise.all(page.messages.map((item) => stamp(number, seat.agentId, seat.name, seat.tag, item.seq)))
+    const full = await Promise.all(page.messages.map((item) => stamp(number, seat.name, seat.name, seat.tag, item.seq)))
     if (request !== threadRequest) return
     messages.value = [...full, ...messages.value]
     hasMore.value = page.hasMore
@@ -846,10 +880,9 @@ async function loadOlder() {
   }
 }
 
-function onThreadScroll() {
-  const el = threadEl.value
-  if (!el) return
-  stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 48
+function onThreadScroll(event: Event) {
+  const el = event.target as HTMLElement
+  stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48
   if (el.scrollTop < 24) void loadOlder()
 }
 
@@ -861,16 +894,16 @@ async function send() {
   sending.value = true
   sendError.value = ''
   try {
-    const sent = await sendAgentConversation(number, seat.agentId, text)
+    const sent = await sendAgentConversation(number, seat.name, text)
     draft.value = ''
-    const user = { ...sent.user, agentId: seat.agentId, agentName: seat.name, agentTag: seat.tag }
-    const assistant = { ...sent.assistant, agentId: seat.agentId, agentName: seat.name, agentTag: seat.tag }
-    messages.value = messages.value.filter((message) => message.agentId !== seat.agentId || (message.seq !== user.seq && message.seq !== assistant.seq))
+    const user = { ...sent.user, agentId: seat.name, agentName: seat.name, agentTag: seat.tag }
+    const assistant = { ...sent.assistant, agentId: seat.name, agentName: seat.name, agentTag: seat.tag }
+    messages.value = messages.value.filter((message) => message.agentId !== seat.name || (message.seq !== user.seq && message.seq !== assistant.seq))
     messages.value.push(user, assistant)
-    stickToBottom = true
+    stickToBottom.value = true
     await nextTick()
     scrollThreadToEnd()
-    if (assistant.status === 'running') watchStream(number, seat.agentId, assistant.seq)
+    if (assistant.status === 'running') watchStream(number, seat.name, assistant.seq)
   } catch (error) {
     sendError.value = error instanceof Error && error.message ? error.message : '消息没有送出去。'
   } finally {
@@ -897,10 +930,10 @@ function onDraftKeydown(event: KeyboardEvent) {
   void send()
 }
 
-function watchStream(number: string, agentId: number, seq: number) {
+function watchStream(number: string, agentId: string, seq: number) {
   const key = `${agentId}:${seq}`
   streams.get(key)?.close()
-  const source = new EventSource(`/api/issues/${encodeURIComponent(number)}/agents/${agentId}/conversations/${seq}/stream`)
+  const source = new EventSource(`/api/issues/${encodeURIComponent(number)}/agents/${encodeURIComponent(agentId)}/conversations/${seq}/stream`)
   streams.set(key, source)
   const current = () => {
     const index = messages.value.findIndex((message) => message.agentId === agentId && message.seq === seq)
@@ -909,7 +942,7 @@ function watchStream(number: string, agentId: number, seq: number) {
   }
   const put = (index: number, message: ShownMessage) => {
     messages.value[index] = message
-    if (stickToBottom) void nextTick(scrollThreadToEnd)
+    if (stickToBottom.value) void nextTick(scrollThreadToEnd)
   }
   const apply = (kind: string) => (event: MessageEvent) => {
     const data = JSON.parse(event.data) as ConversationMessage & ConversationPart & { status?: ConversationMessage['status'] }
@@ -972,12 +1005,12 @@ function closeStream() {
 }
 
 function scrollThreadToEnd() {
-  const el = threadEl.value
+  const el = threadNode()
   if (!el) return
   el.scrollTop = el.scrollHeight
 }
 
-async function openAttachment(path: string | undefined, agentId: number) {
+async function openAttachment(path: string | undefined, agentId: string) {
   if (!path) return
   const number = issueView.value.id
   fileError.value = ''
@@ -1026,6 +1059,12 @@ onUnmounted(() => {
       </div>
       <h2 id="task-detail-title">{{ task.description }}</h2>
       <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
+      <label v-if="canEditRelease" class="release-edit">
+        预计上线时间
+        <input type="date" :value="task.releaseOn ?? ''" :disabled="releaseSaving" @change="saveRelease" />
+      </label>
+      <span v-else-if="task.releaseOn" class="release-on">{{ task.releaseOn }} 发布</span>
+      <p v-if="releaseError" class="release-error">{{ releaseError }}</p>
       <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
       <nav v-if="hasChildren" class="lane" aria-label="主 issue 和实现顺序">
         <button
@@ -1288,10 +1327,10 @@ onUnmounted(() => {
         <button type="button" :class="{ on: focusAgent === 'group' }" @click="selectAgent('group')">群聊</button>
         <button
           v-for="seat in orderedSeats"
-          :key="seat.agentId"
+          :key="seat.name"
           type="button"
-          :class="{ on: focusAgent === seat.agentId }"
-          @click="selectAgent(seat.agentId)"
+          :class="{ on: focusAgent === seat.name }"
+          @click="selectAgent(seat.name)"
         >
           <span>{{ seat.name }}</span>
           <em v-if="seat.tag">{{ seat.tag }}</em>
@@ -1319,13 +1358,23 @@ onUnmounted(() => {
       <div v-else class="session-live">
         <p v-if="threadState === 'loading'" class="empty">正在读取对话。</p>
         <p v-else-if="threadState === 'error'" class="empty">对话没有读到。</p>
-        <ol v-else ref="threadEl" class="thread" @scroll="onThreadScroll">
+        <VirtualThread
+          v-else
+          ref="threadEl"
+          class="thread"
+          :items="messages"
+          :item-key="messageKey"
+          :pinned="stickToBottom"
+          @scroll="onThreadScroll"
+        >
+          <template #before>
           <li v-if="hasMore" class="older">
             <button type="button" class="fold" :disabled="loadingOlder" @click="loadOlder">
               {{ loadingOlder ? '正在读取更早的消息' : '更早的消息' }}
             </button>
           </li>
-          <template v-for="(message, index) in messages" :key="`${message.agentId}-${message.seq}`">
+          </template>
+          <template #default="{ item: message, index }">
           <li v-if="showTimeNode(index)" class="time-node">
             <time :datetime="messageStamp(message.createdAt)">{{ messageClock(message.createdAt) }}</time>
           </li>
@@ -1363,10 +1412,12 @@ onUnmounted(() => {
             </div>
           </li>
           </template>
+          <template #after>
           <li v-if="messages.length === 0" class="thread-empty">
             <p class="empty">还没有消息。</p>
           </li>
-        </ol>
+          </template>
+        </VirtualThread>
         <p v-if="focusAgent === 'group'" class="group-note">选择一个 Agent 再发送。群聊按时间把各自的会话铺在一起。</p>
         <form v-else class="reply" @submit.prevent="send">
           <textarea
@@ -2196,6 +2247,7 @@ h3 {
 }
 
 .session-live > .thread {
+  display: block;
   flex: 1;
   min-height: 0;
   overflow: auto;
@@ -2747,6 +2799,36 @@ textarea {
 
 .next-panel {
   margin-bottom: 20px;
+}
+
+.release-on {
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.release-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.release-edit input {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 6px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+}
+
+.release-error {
+  margin: 8px 0 0;
+  color: var(--danger);
+  font-size: 13px;
 }
 
 .state {

@@ -1,0 +1,30 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: helix
+  namespace: helix
+data:
+  AGENTKIT_MODEL: glm-5.3
+  AGENTKIT_BASE_URL: http://litellm.litellm.svc.cluster.local:4000/v1
+  AGENTKIT_VL_MODEL: ""
+  HELIX_S3_ENDPOINT: https://cos.ap-shanghai.myqcloud.com
+  HELIX_S3_REGION: ap-shanghai
+  HELIX_S3_BUCKET: ags-sandbox-1309122329
+  HELIX_S3_PREFIX: helix/home
+  HELIX_FRONTEND_URL: https://helix.dev.oalite.com
+  GITLAB_REDIRECT_URI: https://helix.dev.oalite.com/api/auth/callback
+  GITLAB_SCOPE: api
+  HELIX_WORK_ROOT: /var/helix/work
+  HELIX_AGENTKIT_WORKSPACE: /var/helix/agents
+  HELIX_SERVER: http://helix-backend.helix.svc.cluster.local:8081
+  GITLAB_HOST: https://hackers.oalite.com
+  GITLAB_PROJECT: qingflow-develop/qingflow-workspace
+  HELIX_WORKER_ID: worker-k8s
+  HELIX_WORKER_NAME: 集群
+  HELIX_WORKER_PORT: "8091"
+  HELIX_WORKER_ROOT: /var/helix/workers
+  HTTP_PROXY: http://clash.gitlab-runner.svc.cluster.local:7897
+  HTTPS_PROXY: http://clash.gitlab-runner.svc.cluster.local:7897
+  NO_PROXY: .oalite.com,.svc,.cluster.local,localhost,127.0.0.1
+  TZ: Asia/Shanghai
+  JAVA_TOOL_OPTIONS: -Duser.timezone=Asia/Shanghai

@@ -6,10 +6,11 @@ export interface Move {
   tone: 'forward' | 'back' | 'stop'
   needsReason: boolean
   needsOwners: boolean
+  needsRelease: boolean
   disabledReason: string | null
 }
 
-const MOVES: Record<TaskStatus, Omit<Move, 'disabledReason'>[]> = {
+const MOVES: Record<TaskStatus, Omit<Move, 'disabledReason' | 'needsRelease'>[]> = {
   提案中: [
     { to: '实现中', label: '采纳，进入实现', tone: 'forward', needsReason: false, needsOwners: true },
     { to: '审阅中', label: '采纳，直接审阅', tone: 'forward', needsReason: false, needsOwners: true },
@@ -35,6 +36,7 @@ const MOVES: Record<TaskStatus, Omit<Move, 'disabledReason'>[]> = {
 export function movesFor(status: TaskStatus, locked: boolean): Move[] {
   return MOVES[status].map((move) => ({
     ...move,
+    needsRelease: move.to === '待上线池',
     disabledReason:
       locked && status === '提案中' && (move.to === '实现中' || move.to === '审阅中')
         ? '前置还没到可上线'

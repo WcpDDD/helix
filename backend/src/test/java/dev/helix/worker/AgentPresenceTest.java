@@ -16,7 +16,7 @@ class AgentPresenceTest {
 	@Test
 	void aLaterHeartbeatDropsAnAgentThatFinished() {
 		AgentPresence presence = new AgentPresence(Duration.ofSeconds(15));
-		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, 2L)));
+		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, "developer")));
 
 		assertThat(presence.running(235)).isPresent();
 

@@ -158,15 +158,35 @@ class ConversationBoardTest {
 			sink.onEvent(new ExecutionEvent.RunEnded(ExecutionPhase.COMPLETED, message, null, null));
 		});
 
-		assertThat(board.send(21, 4, "{\"text\":\"给提案\"}").status()).isEqualTo(200);
-		assertThat(board.send(21, 5, "{\"text\":\"给实现\"}").status()).isEqualTo(200);
-		assertThat(board.send(21, 4, "{\"text\":\"提案再来\"}").status()).isEqualTo(200);
+		assertThat(board.send(21, "proposal", "{\"text\":\"给提案\"}").status()).isEqualTo(200);
+		assertThat(board.send(21, "developer", "{\"text\":\"给实现\"}").status()).isEqualTo(200);
+		assertThat(board.send(21, "proposal", "{\"text\":\"提案再来\"}").status()).isEqualTo(200);
 
 		assertThat(threads).hasSize(3);
 		assertThat(threads.get(2)).isEqualTo(threads.get(0));
 		assertThat(threads.get(1)).isNotEqualTo(threads.get(0));
-		assertThat(json.readTree(board.list(21, 4, null).body()).path("messages")).hasSize(4);
-		assertThat(json.readTree(board.list(21, 5, null).body()).path("messages")).hasSize(2);
+		assertThat(json.readTree(board.list(21, "proposal", null).body()).path("messages")).hasSize(4);
+		assertThat(json.readTree(board.list(21, "developer", null).body()).path("messages")).hasSize(2);
+	}
+
+	@Test
+	void ldapUserEnvReachesTheAgentAndStaysOutOfTheTranscript() throws Exception {
+		Map<String, String> seen = new java.util.concurrent.ConcurrentHashMap<>();
+		Path root = temp.resolve("workers");
+		Map<String, String> env = Map.of("HELIX_REPO", repo().toString(), "GITLAB_HOST", "https://gitlab.example");
+		ConversationBoard board = new ConversationBoard(root, env, (thread, message, workspace, gitlab, sink, profile) -> {
+			seen.putAll(gitlab);
+			sink.onEvent(new ExecutionEvent.RunEnded(ExecutionPhase.COMPLETED, "好", null, null));
+		});
+
+		String body = """
+				{"text":"看一下","userEnv":{"LDAP_UID":"chenxinpei","LDAP_PASSWORD":"secret","PATH":"/tmp"}}""";
+		assertThat(board.send(21, body).status()).isEqualTo(200);
+		assertThat(seen).containsEntry("GITLAB_HOST", "https://gitlab.example")
+				.containsEntry("LDAP_UID", "chenxinpei")
+				.containsEntry("LDAP_PASSWORD", "secret")
+				.doesNotContainKey("PATH");
+		assertThat(board.content(21, 1).body()).doesNotContain("secret");
 	}
 
 	@Test

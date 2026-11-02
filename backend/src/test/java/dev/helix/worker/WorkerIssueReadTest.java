@@ -31,7 +31,7 @@ class WorkerIssueReadTest {
 		when(registry.live("worker-local"))
 				.thenReturn(Optional.of(new CallableWorker("worker-local", "本机", URI.create("http://127.0.0.1:8091"))));
 		when(sessions.findByWorkerIdAndIssueNumber("worker-local", 232))
-				.thenReturn(List.of(new AgentSessionEntity(3L, 232, 8L, "worker-local")));
+				.thenReturn(List.of(new AgentSessionEntity(3L, 232, "manager", "worker-local")));
 		when(projects.findById(3L)).thenReturn(Optional.of(project));
 		when(credential.current()).thenReturn("tok");
 		when(gitlab.detail("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 232))
@@ -66,7 +66,7 @@ class WorkerIssueReadTest {
 		when(registry.live("worker-local"))
 				.thenReturn(Optional.of(new CallableWorker("worker-local", "本机", URI.create("http://127.0.0.1:8091"))));
 		when(sessions.findByWorkerIdAndIssueNumber("worker-local", 232))
-				.thenReturn(List.of(new AgentSessionEntity(3L, 232, 8L, "worker-local")));
+				.thenReturn(List.of(new AgentSessionEntity(3L, 232, "manager", "worker-local")));
 		when(projects.findById(3L)).thenReturn(Optional.of(project));
 		when(credential.current()).thenReturn("tok");
 		WorkerIssueRead read = new WorkerIssueRead(registry, sessions, projects, gitlab, credential);
@@ -87,7 +87,7 @@ class WorkerIssueReadTest {
 		when(registry.live("worker-local"))
 				.thenReturn(Optional.of(new CallableWorker("worker-local", "本机", URI.create("http://127.0.0.1:8091"))));
 		when(sessions.findByWorkerIdAndIssueNumber("worker-local", 232))
-				.thenReturn(List.of(new AgentSessionEntity(3L, 232, 8L, "worker-local")));
+				.thenReturn(List.of(new AgentSessionEntity(3L, 232, "manager", "worker-local")));
 		when(projects.findById(3L)).thenReturn(Optional.of(project));
 		when(credential.current()).thenReturn("tok");
 		WorkerIssueRead read = new WorkerIssueRead(registry, sessions, projects, gitlab, credential);
@@ -108,7 +108,7 @@ class WorkerIssueReadTest {
 		when(registry.live("worker-local"))
 				.thenReturn(Optional.of(new CallableWorker("worker-local", "本机", URI.create("http://127.0.0.1:8091"))));
 		when(sessions.findByWorkerIdAndIssueNumber("worker-local", 232))
-				.thenReturn(List.of(new AgentSessionEntity(3L, 232, 8L, "worker-local")));
+				.thenReturn(List.of(new AgentSessionEntity(3L, 232, "manager", "worker-local")));
 		when(projects.findById(3L)).thenReturn(Optional.of(project));
 		when(credential.current()).thenReturn("tok");
 		when(gitlab.comment("tok", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace", 232, "工作记录：写完了"))

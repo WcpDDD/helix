@@ -16,11 +16,20 @@ import { useProjectStore } from '@/stores/projects'
 const projects = useProjectStore()
 const agents = ref<AgentRecord[]>([])
 const catalog = ref<SkillEntry[]>([])
-const selectedId = ref<number | 'new' | null>(null)
+const selectedId = ref<string | 'new' | null>(null)
 const name = ref('')
 const body = ref('')
 const skills = ref<string[]>([])
 const tag = ref<string | null>(null)
+const scope = ref<'global' | 'task'>('task')
+const access = ref<string[]>(['reporter', 'developer', 'maintainer'])
+
+const accessRoles = ['reporter', 'developer', 'maintainer']
+
+const layers = [
+  { id: 'global' as const, label: '全局智能体' },
+  { id: 'task' as const, label: '任务智能体' },
+]
 const phase = ref<'loading' | 'ready' | 'error'>('loading')
 const notice = ref('')
 const saving = ref(false)
@@ -33,6 +42,12 @@ const pickerEl = ref<HTMLElement | null>(null)
 
 const html = computed(() => renderMarkdown(body.value))
 const available = computed(() => catalog.value.filter((skill) => !skills.value.includes(skill.path)))
+const grouped = computed(() =>
+  layers.map((layer) => ({
+    ...layer,
+    agents: agents.value.filter((agent) => (agent.scope || (agent.tag ? 'task' : 'global')) === layer.id),
+  })),
+)
 
 watch(
   () => projects.currentId,
@@ -65,14 +80,14 @@ async function load() {
     agents.value = next
     catalog.value = listed
     phase.value = 'ready'
-    if (next[0]) select(next[0].id)
+    if (next[0]) select(next[0].name)
   } catch (error: unknown) {
     phase.value = 'error'
     notice.value = error instanceof Error && error.name === 'IssueReadAuthError' ? '登录后才能定义 agent。' : 'agent 没有读到。'
   }
 }
 
-function select(id: number | 'new') {
+function select(id: string | 'new') {
   pickerOpen.value = false
   confirmDelete.value = false
   saved.value = false
@@ -84,18 +99,35 @@ function select(id: number | 'new') {
     body.value = ''
     skills.value = []
     tag.value = null
+    scope.value = 'task'
+    access.value = [...accessRoles]
     return
   }
-  const agent = agents.value.find((item) => item.id === id)
+  const agent = agents.value.find((item) => item.name === id)
   name.value = agent?.name ?? ''
   body.value = agent?.body ?? ''
   skills.value = [...(agent?.skills ?? [])]
-  tag.value = agent?.tag ?? null
+  scope.value = agent?.scope === 'global' ? 'global' : 'task'
+  tag.value = scope.value === 'global' ? null : (agent?.tag ?? null)
+  access.value = agent?.access?.length ? [...agent.access] : [...accessRoles]
 }
 
 function tagHolder(role: string): string | null {
-  const owner = agents.value.find((agent) => agent.tag === role && agent.id !== selectedId.value)
+  const owner = agents.value.find((agent) => agent.tag === role && agent.name !== selectedId.value)
   return owner?.name ?? null
+}
+
+function chooseScope(next: 'global' | 'task') {
+  scope.value = next
+  if (next === 'global') tag.value = null
+  saved.value = false
+}
+
+function toggleAccess(role: string) {
+  const next = access.value.includes(role) ? access.value.filter((item) => item !== role) : [...access.value, role]
+  if (next.length === 0) return
+  access.value = next
+  saved.value = false
 }
 
 function chooseTag(next: string) {
@@ -129,13 +161,21 @@ async function save() {
   saving.value = true
   saveError.value = ''
   saved.value = false
-  const draft = { name: name.value.trim(), body: body.value, skills: skills.value, tag: tag.value }
+  const draft = {
+    name: name.value.trim(),
+    body: body.value,
+    skills: skills.value,
+    tag: scope.value === 'global' ? null : tag.value,
+    scope: scope.value,
+    access: access.value,
+  }
   try {
     const savedAgent = selectedId.value === 'new' ? await createAgent(draft) : await updateAgent(selectedId.value, draft)
-    agents.value = [...agents.value.filter((item) => item.id !== savedAgent.id), savedAgent].sort((a, b) =>
+    const previous = selectedId.value
+    agents.value = [...agents.value.filter((item) => item.name !== previous && item.name !== savedAgent.name), savedAgent].sort((a, b) =>
       a.name.localeCompare(b.name, 'zh'),
     )
-    select(savedAgent.id)
+    select(savedAgent.name)
     saved.value = true
   } catch (error: unknown) {
     saveError.value = error instanceof Error && error.name !== 'IssueReadAuthError' ? error.message : 'agent 没有保存。'
@@ -146,7 +186,7 @@ async function save() {
 
 async function remove() {
   if (selectedId.value == null || selectedId.value === 'new') {
-    selectedId.value = agents.value[0]?.id ?? null
+    selectedId.value = agents.value[0]?.name ?? null
     if (selectedId.value != null) select(selectedId.value)
     return
   }
@@ -157,9 +197,9 @@ async function remove() {
   const id = selectedId.value
   try {
     await deleteAgent(id)
-    agents.value = agents.value.filter((item) => item.id !== id)
+    agents.value = agents.value.filter((item) => item.name !== id)
     const next = agents.value[0]
-    if (next) select(next.id)
+    if (next) select(next.name)
     else selectedId.value = null
   } catch {
     saveError.value = 'agent 没有删除。'
@@ -172,7 +212,7 @@ async function remove() {
   <main class="agent-page">
     <header class="head">
       <h1>Agent</h1>
-      <p>每个 agent 有一份 agent.md，并标出它承担的角色。</p>
+      <p>每个 agent 存在工作目录的 agents/&lt;名字&gt;/agent.md。全局智能体用在首页，任务智能体用在任务里，并按 GitLab 权限决定谁能看见。</p>
     </header>
 
     <p v-if="phase === 'loading'" class="note">正在读取 agent。</p>
@@ -180,17 +220,21 @@ async function remove() {
     <div v-else class="board">
       <nav class="agent-list" aria-label="agents">
         <button type="button" class="create" :class="{ on: selectedId === 'new' }" @click="select('new')">新建</button>
-        <button
-          v-for="agent in agents"
-          :key="agent.id"
-          type="button"
-          :class="{ on: agent.id === selectedId }"
-          :title="agent.name"
-          @click="select(agent.id)"
-        >
-          <span class="agent-name">{{ agent.name }}</span>
-          <span v-if="agent.tag" class="agent-tags">{{ agent.tag }}</span>
-        </button>
+        <section v-for="layer in grouped" :key="layer.id" class="layer">
+          <h2>{{ layer.label }}</h2>
+          <p v-if="layer.agents.length === 0" class="layer-empty">还没有。</p>
+          <button
+            v-for="agent in layer.agents"
+            :key="agent.name"
+            type="button"
+            :class="{ on: agent.name === selectedId }"
+            :title="agent.name"
+            @click="select(agent.name)"
+          >
+            <span class="agent-name">{{ agent.name }}</span>
+            <span v-if="layer.id === 'task' && agent.tag" class="agent-tags">{{ agent.tag }}</span>
+          </button>
+        </section>
       </nav>
 
       <section v-if="selectedId != null" class="editor">
@@ -199,6 +243,25 @@ async function remove() {
           <input v-model="name" type="text" autocomplete="off" placeholder="给这个 agent 起个名字" @input="saved = false" />
         </label>
         <div class="tags">
+          <span>层面</span>
+          <div class="tag-choices">
+            <button type="button" :class="{ on: scope === 'global' }" @click="chooseScope('global')">全局</button>
+            <button type="button" :class="{ on: scope === 'task' }" @click="chooseScope('task')">任务</button>
+          </div>
+          <span>谁可以用</span>
+          <div class="tag-choices">
+            <button
+              v-for="role in accessRoles"
+              :key="role"
+              type="button"
+              :class="{ on: access.includes(role) }"
+              @click="toggleAccess(role)"
+            >
+              {{ role }}
+            </button>
+          </div>
+        </div>
+        <div v-if="scope === 'task'" class="tags">
           <span>角色</span>
           <div v-for="group in agentTagGroups" :key="group.id" class="tag-group" role="group" :aria-label="group.label">
             <span class="tag-layer">{{ group.label }}</span>
@@ -317,6 +380,24 @@ async function remove() {
   min-height: 0;
   margin: 0;
   overflow: auto;
+}
+
+.layer {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.layer h2,
+.layer-empty {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.layer-empty {
+  font-weight: 400;
 }
 
 .agent-list button,

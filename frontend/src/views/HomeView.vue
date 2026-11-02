@@ -3,32 +3,43 @@ import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
 import { useRoute } from 'vue-router'
 import TaskCreate from '@/components/TaskCreate.vue'
 import TaskDetail from '@/components/TaskDetail.vue'
+import TaskGantt from '@/components/TaskGantt.vue'
 import TaskNext from '@/components/TaskNext.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
-import { fetchTasks, transitionTask } from '@/api/client'
+import { fetchTasks, scheduleRelease, transitionTask } from '@/api/client'
 import { useProjectStore } from '@/stores/projects'
+import { useSessionStore } from '@/stores/session'
 import { rememberPeople } from '@/data/people'
 import { applyTask } from '@/data/statusDraft'
 import { taskTransitionKey } from '@/data/taskTransition'
 import { stageFilters, statusTone, type StageFilter, type Task, type TaskStage, type TaskStatus } from '@/data/tasks'
 
+const taskViews = ['列表', '甘特', '我的'] as const
+type TaskView = (typeof taskViews)[number]
+
 const route = useRoute()
 const projects = useProjectStore()
+const session = useSessionStore()
 const filter = ref<StageFilter>('全部')
+const view = ref<TaskView>('列表')
 const selectedCode = ref<string | null>(typeof route.query.task === 'string' ? route.query.task : null)
 const tasks = ref<Task[]>([])
 const ready = ref(false)
 const loadError = ref('')
 const creating = ref(false)
+const savingCode = ref('')
+const releaseError = ref('')
+const maintainer = computed(() => projects.access === 'maintainer')
 
 const board = computed(() => tasks.value.map(applyTask))
 
-provide(taskTransitionKey, async (code: string, status: TaskStatus, stage: TaskStage) => {
-  const result = await transitionTask(code, status, stage)
+provide(taskTransitionKey, async (code: string, status: TaskStatus, stage: TaskStage, releaseOn?: string | null) => {
+  const result = await transitionTask(code, status, stage, releaseOn)
   const task = tasks.value.find((item) => item.code === code)
   if (task) {
     task.status = result.status
     task.stage = result.stage
+    if (result.releaseOn) task.releaseOn = result.releaseOn
   }
   return result
 })
@@ -73,6 +84,18 @@ const visibleTasks = computed(() => {
   if (filter.value === '全部') return openTasks.value
   return openTasks.value.filter((task) => task.stage === filter.value)
 })
+
+const shownTasks = computed(() => (view.value === '我的' ? visibleTasks.value.filter(isMine) : visibleTasks.value))
+
+const emptyText = computed(() => (view.value === '我的' ? '没有分给你的任务。' : '这个阶段还没有任务。'))
+
+function isMine(task: Task): boolean {
+  const user = session.user
+  if (!user) return false
+  const keys = [user.name, user.username].map((item) => item.trim()).filter(Boolean)
+  const people = [task.issue?.author, task.owner, ...(task.owners ?? [])].filter((item): item is string => !!item)
+  return people.some((person) => keys.includes(person.trim()))
+}
 
 function open(task: Task) {
   selectedCode.value = task.code
@@ -130,6 +153,36 @@ function isOverdue(task: Task): boolean {
   return new Date(`${task.expectedEndAt}T00:00:00`) < today
 }
 
+function canSchedule(task: Task): boolean {
+  return maintainer.value && task.status !== '已关闭' && task.status !== '已驳回'
+}
+
+async function saveRelease(task: Task, event: Event) {
+  const input = event.target as HTMLInputElement
+  const value = input.value
+  if (!value || value === (task.releaseOn ?? '') || savingCode.value) {
+    input.value = task.releaseOn ?? ''
+    return
+  }
+  savingCode.value = task.code
+  releaseError.value = ''
+  try {
+    const saved = await scheduleRelease(task.code, value)
+    const source = tasks.value.find((item) => item.code === task.code)
+    if (source) source.releaseOn = saved
+  } catch (error) {
+    releaseError.value = error instanceof Error ? error.message : '预计上线时间没有保存。'
+    input.value = task.releaseOn ?? ''
+  } finally {
+    savingCode.value = ''
+  }
+}
+
+function rememberRelease(code: string, date: string) {
+  const source = tasks.value.find((item) => item.code === code)
+  if (source) source.releaseOn = date
+}
+
 </script>
 
 <template>
@@ -139,6 +192,19 @@ function isOverdue(task: Task): boolean {
         <h1>任务</h1>
         <button type="button" class="create" @click="creating = true">创建任务</button>
         <button type="button" class="refresh" :disabled="refreshing" @click="manualRefresh">{{ refreshing ? '刷新中…' : '刷新' }}</button>
+      </div>
+      <div class="views" role="tablist" aria-label="任务视图">
+        <button
+          v-for="name in taskViews"
+          :key="name"
+          type="button"
+          role="tab"
+          :aria-selected="view === name"
+          :class="{ on: view === name }"
+          @click="view = name"
+        >
+          {{ name }}
+        </button>
       </div>
       <div class="filters" role="tablist" aria-label="按阶段筛选">
         <button
@@ -158,37 +224,13 @@ function isOverdue(task: Task): boolean {
 
     <p v-if="!ready && !loadError" class="empty">正在读取任务。</p>
     <p v-else-if="loadError" class="empty">{{ loadError }}</p>
+    <p v-if="releaseError" class="empty">{{ releaseError }}</p>
 
-    <div v-if="ready && selected" class="split">
-      <aside class="rail" aria-label="任务">
-        <div
-          v-for="task in visibleTasks"
-          :key="task.code"
-          class="rail-item"
-          role="button"
-          tabindex="0"
-          :class="{ on: selected?.code === task.code }"
-          @click="open(task)"
-          @keydown.enter="open(task)"
-        >
-          <span class="rail-top">
-            <span class="code">
-              #{{ task.code }}
-              <span v-if="(task.issues?.length ?? 0) > 0" class="issue-count">{{ task.issues?.length }} 张子 issue</span>
-            </span>
-            <span class="marks">
-              <span class="state" :class="statusTone(task.status)">{{ task.status }}</span>
-              <span v-if="task.hitl" class="hitl">hitl</span>
-            </span>
-          </span>
-          <span class="rail-desc">{{ task.description }}</span>
-          <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
-        </div>
-      </aside>
-      <TaskDetail v-if="selected" :key="selected.code" :task="selected" @close="selectedCode = null" @refresh="reloadBoard" />
-    </div>
-
-    <div v-if="ready && !loadError && !selected" class="table-wrap">
+    <div v-if="ready && !loadError && shownTasks.length > 0" class="board" :class="{ split: selected }">
+      <div class="pane">
+        <TaskGantt v-if="view === '甘特'" :tasks="shownTasks" :selected="selectedCode" :vertical="!!selected" @open="open" />
+        <template v-else>
+          <div v-if="!selected" class="table-wrap">
       <table>
         <colgroup>
           <col class="col-code" />
@@ -200,6 +242,7 @@ function isOverdue(task: Task): boolean {
           <col class="col-date" />
           <col class="col-date" />
           <col class="col-date" />
+          <col class="col-release" />
         </colgroup>
         <thead>
           <tr>
@@ -212,11 +255,12 @@ function isOverdue(task: Task): boolean {
             <th class="date" scope="col">开始时间</th>
             <th class="date" scope="col">预计结束</th>
             <th class="date" scope="col">实际结束</th>
+            <th class="date" scope="col">预计上线时间</th>
           </tr>
         </thead>
         <tbody>
           <tr
-            v-for="task in visibleTasks"
+            v-for="task in shownTasks"
             :key="task.code"
             role="button"
             tabindex="0"
@@ -246,17 +290,32 @@ function isOverdue(task: Task): boolean {
             <td class="date">{{ task.startedAt }}</td>
             <td class="date" :class="{ overdue: isOverdue(task) }">{{ task.expectedEndAt ?? '—' }}</td>
             <td class="date">{{ task.finishedAt ?? '—' }}</td>
+            <td class="date" @click.stop>
+              <input
+                v-if="canSchedule(task)"
+                class="release-edit"
+                type="date"
+                :value="task.releaseOn ?? ''"
+                :disabled="savingCode === task.code"
+                :aria-label="`#${task.code} 预计上线时间`"
+                @click.stop
+                @keydown.enter.stop
+                @change="saveRelease(task, $event)"
+              />
+              <span v-else>{{ task.releaseOn || '—' }}</span>
+            </td>
           </tr>
         </tbody>
       </table>
-    </div>
+          </div>
 
-    <ul v-if="ready && !loadError && !selected" class="task-cards">
+          <ul class="task-cards">
       <li
-        v-for="task in visibleTasks"
+        v-for="task in shownTasks"
         :key="task.code"
         role="button"
         tabindex="0"
+        :class="{ on: selected?.code === task.code }"
         @click="open(task)"
         @keydown.enter="open(task)"
       >
@@ -288,11 +347,40 @@ function isOverdue(task: Task): boolean {
             <dt>实际结束</dt>
             <dd>{{ task.finishedAt ?? '—' }}</dd>
           </div>
+          <div @click.stop>
+            <dt>预计上线时间</dt>
+            <dd>
+              <input
+                v-if="canSchedule(task)"
+                class="release-edit"
+                type="date"
+                :value="task.releaseOn ?? ''"
+                :disabled="savingCode === task.code"
+                :aria-label="`#${task.code} 预计上线时间`"
+                @click.stop
+                @keydown.enter.stop
+                @change="saveRelease(task, $event)"
+              />
+              <template v-else>{{ task.releaseOn || '—' }}</template>
+            </dd>
+          </div>
         </dl>
       </li>
-    </ul>
+          </ul>
+        </template>
+      </div>
+      <TaskDetail
+        v-if="selected"
+        :key="selected.code"
+        :task="selected"
+        :can-edit-release="canSchedule(selected)"
+        @close="selectedCode = null"
+        @refresh="reloadBoard"
+        @release="rememberRelease(selected.code, $event)"
+      />
+    </div>
 
-    <p v-if="ready && !loadError && visibleTasks.length === 0" class="empty">这个阶段还没有任务。</p>
+    <p v-if="ready && !loadError && shownTasks.length === 0" class="empty">{{ emptyText }}</p>
     <TaskCreate v-if="creating" @close="creating = false" @created="created" />
   </main>
 </template>
@@ -384,51 +472,53 @@ h1 {
   font-size: 12px;
 }
 
-.split {
-  display: grid;
-  grid-template-columns: 280px minmax(0, 1fr);
-  gap: 16px;
-  flex: 1;
-  min-height: 0;
-}
-
-.rail {
-  overflow: auto;
-  overflow-anchor: none;
-  overscroll-behavior: contain;
-  display: grid;
-  align-content: start;
-  gap: 8px;
-  padding-right: 2px;
-  scrollbar-width: none;
-}
-
-.rail::-webkit-scrollbar {
-  display: none;
-}
-
-.rail-item {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 88px;
-  display: grid;
+.views {
+  display: flex;
   gap: 6px;
-  width: 100%;
-  padding: 12px;
+  padding: 4px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: 999px;
   background: var(--surface);
-  color: inherit;
-  text-align: left;
+}
+
+.views button {
+  border: 0;
+  border-radius: 999px;
+  padding: 6px 12px;
+  background: transparent;
+  color: var(--muted);
   cursor: pointer;
 }
 
-.rail-item.on {
-  border-color: var(--accent);
-  background: #f3faf7;
+.views button.on {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
-.rail-top,
-.rail-owner,
+.board {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  gap: 16px;
+}
+
+.board.split {
+  grid-template-columns: 240px minmax(0, 1fr);
+}
+
+.pane {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.board.split .pane {
+  overflow: auto;
+}
+
 .marks {
   display: flex;
   align-items: center;
@@ -445,15 +535,6 @@ td .marks {
   justify-content: flex-start;
 }
 
-.rail-desc {
-  display: -webkit-box;
-  overflow: hidden;
-  font-weight: 550;
-  line-height: 1.4;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-}
-
 .issue-count {
   display: inline-block;
   margin-left: 6px;
@@ -464,12 +545,6 @@ td .marks {
   font-size: 12px;
   font-weight: 650;
   white-space: nowrap;
-}
-
-.rail-owner {
-  justify-content: flex-start;
-  color: var(--muted);
-  font-size: 13px;
 }
 
 .table-wrap {
@@ -483,7 +558,7 @@ td .marks {
 
 table {
   width: 100%;
-  min-width: 1410px;
+  min-width: 1566px;
   border-collapse: separate;
   border-spacing: 0;
   table-layout: fixed;
@@ -515,6 +590,10 @@ table {
 
 .col-date {
   width: 120px;
+}
+
+.col-release {
+  width: 156px;
 }
 
 td.next {
@@ -649,8 +728,80 @@ td.date {
   font-weight: 650;
 }
 
+.release-edit {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 4px 6px;
+  background: white;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+}
+
 .task-cards {
   display: none;
+}
+
+.board.split .task-cards {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.board.split .task-cards li {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+.board.split .task-cards li.on {
+  border-color: var(--accent);
+}
+
+.board.split .task-cards p {
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+  font-weight: 550;
+}
+
+.board.split .card-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 8px;
+}
+
+.board.split .marks {
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.board.split dl {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin: 14px 0 0;
+}
+
+.board.split .release-edit {
+  max-width: 100%;
+}
+
+.board.split dt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.board.split dd {
+  margin: 2px 0 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
 }
 
 .empty {
@@ -659,14 +810,22 @@ td.date {
 }
 
 @media (max-width: 800px) {
-  .split {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
+  .board.split {
+    grid-template-columns: minmax(0, 1fr);
   }
 
-  .rail {
+  .board.split .pane {
     display: none;
+  }
+
+  .views {
+    overflow: auto;
+    scrollbar-width: none;
+  }
+
+  .views button {
+    flex: none;
+    white-space: nowrap;
   }
 
   .tasks-head {
@@ -736,7 +895,7 @@ td.date {
 
   dl {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
     gap: 8px;
     margin: 14px 0 0;
   }

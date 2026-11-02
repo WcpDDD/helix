@@ -6,6 +6,7 @@ import dev.helix.auth.AuthController;
 import dev.helix.auth.GitlabSessionToken;
 import dev.helix.auth.GitlabUser;
 import dev.helix.board.CurrentProject;
+import dev.helix.board.ProjectAccess;
 import dev.helix.board.ProjectEntity;
 import dev.helix.board.ProjectRepository;
 import dev.helix.board.ProjectWorkspaceService;
@@ -45,14 +46,17 @@ public class ProjectController {
 
 	private final GitlabSessionToken tokens;
 
+	private final ProjectAccess access;
+
 	public ProjectController(ProjectService projectService, ProjectWorkspaceService workspace, CurrentProject currentProject,
-			ProjectRepository projects, ProjectWorkspaces workspaces, GitlabSessionToken tokens) {
+			ProjectRepository projects, ProjectWorkspaces workspaces, GitlabSessionToken tokens, ProjectAccess access) {
 		this.projectService = projectService;
 		this.workspace = workspace;
 		this.currentProject = currentProject;
 		this.projects = projects;
 		this.workspaces = workspaces;
 		this.tokens = tokens;
+		this.access = access;
 	}
 
 	@GetMapping("/projects")
@@ -63,6 +67,14 @@ public class ProjectController {
 	@GetMapping("/projects/current")
 	public Project current(HttpServletRequest http) {
 		return ProjectService.view(currentProject.resolve(http.getSession(false)));
+	}
+
+	@GetMapping("/projects/current/access")
+	public AccessResponse access(HttpServletRequest http) {
+		HttpSession session = http.getSession(false);
+		ProjectEntity project = currentProject.resolve(session);
+		String token = tokens.require(session);
+		return new AccessResponse(access.of(token, project, user(session)));
 	}
 
 	@GetMapping("/projects/current/work")
@@ -125,6 +137,16 @@ public class ProjectController {
 	}
 
 	public record IdRequest(long id) {
+	}
+
+	public record AccessResponse(String access) {
+	}
+
+	private static GitlabUser user(HttpSession session) {
+		if (session == null || !(session.getAttribute(AuthController.SESSION_USER) instanceof GitlabUser user)) {
+			throw new ResponseStatusException(HttpStatus.UNAUTHORIZED);
+		}
+		return user;
 	}
 
 	private static void requireUser(HttpServletRequest request) {
