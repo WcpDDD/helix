@@ -4,6 +4,7 @@ import { RouterLink } from 'vue-router'
 import { fetchIssueAgents, createIssueAgentSession, fetchAgentConversations, fetchAgentConversation, sendAgentConversation, fetchConversationFile, fetchIssueBody, fetchIssueNotes, fetchGoal, startGoal, stopGoal, confirmHitl, releaseHitl, scheduleRelease, type IssueAgent, type ConversationMessage, type ConversationPart, type IssueNote, type GoalStatus } from '@/api/client'
 import TaskNext from '@/components/TaskNext.vue'
 import VirtualThread from '@/components/VirtualThread.vue'
+import OwnerEdit from '@/components/OwnerEdit.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
 import { agentTags } from '@/data/agentTags'
 import { renderMarkdown } from '@/markdown'
@@ -25,6 +26,7 @@ const emit = defineEmits<{
   close: []
   refresh: []
   release: [date: string]
+  owners: [owners: string[]]
 }>()
 
 const releaseSaving = ref(false)
@@ -87,6 +89,8 @@ const fileError = ref('')
 let sessionRequest = 0
 let threadRequest = 0
 const streams = new Map<string, EventSource>()
+const streamTimers = new Map<string, number>()
+const openParts = ref(new Set<string>())
 const currentSeat = computed(() => seats.value.find((seat) => seat.name === focusAgent.value) ?? null)
 const orderedSeats = computed(() =>
   [...seats.value].sort((left, right) => {
@@ -712,7 +716,28 @@ async function readPage(number: string, seat: IssueAgent, before?: number): Prom
 
 async function stamp(number: string, agentId: string, agentName: string, agentTag: string, seq: number): Promise<ShownMessage> {
   const message = await fetchAgentConversation(number, agentId, seq)
-  return { ...message, agentId, agentName, agentTag }
+  return { ...message, parts: packParts(message.parts), agentId, agentName, agentTag }
+}
+
+function packParts(parts: ConversationPart[] | undefined): ConversationPart[] {
+  const packed: ConversationPart[] = []
+  for (const part of parts ?? []) {
+    if ((part.kind === 'text' || part.kind === 'thinking') && mergeText(packed, part.kind, part.text || '')) continue
+    packed.push({ ...part })
+  }
+  return packed
+}
+
+function mergeText(parts: ConversationPart[], kind: 'text' | 'thinking', text: string): boolean {
+  for (let index = parts.length - 1; index >= 0; index--) {
+    const prev = parts[index]
+    if (!prev || prev.kind === 'tool' || prev.kind === 'file') return false
+    if (prev.kind === kind) {
+      parts[index] = { ...prev, text: `${prev.text || ''}${text}` }
+      return true
+    }
+  }
+  return false
 }
 
 async function warmRelays(number: string, request: number) {
@@ -883,7 +908,7 @@ async function loadOlder() {
 function onThreadScroll(event: Event) {
   const el = event.target as HTMLElement
   stickToBottom.value = el.scrollHeight - el.scrollTop - el.clientHeight < 48
-  if (el.scrollTop < 24) void loadOlder()
+  if (!stickToBottom.value && el.scrollTop < 24) void loadOlder()
 }
 
 async function send() {
@@ -933,36 +958,63 @@ function onDraftKeydown(event: KeyboardEvent) {
 function watchStream(number: string, agentId: string, seq: number) {
   const key = `${agentId}:${seq}`
   streams.get(key)?.close()
+  const previous = streamTimers.get(key)
+  if (previous) window.clearTimeout(previous)
+  streamTimers.delete(key)
   const source = new EventSource(`/api/issues/${encodeURIComponent(number)}/agents/${encodeURIComponent(agentId)}/conversations/${seq}/stream`)
   streams.set(key, source)
+  let draft: ShownMessage | undefined
+  let timer = 0
   const current = () => {
     const index = messages.value.findIndex((message) => message.agentId === agentId && message.seq === seq)
     const message = index < 0 ? undefined : messages.value[index]
     return { index, message }
   }
-  const put = (index: number, message: ShownMessage) => {
-    messages.value[index] = message
+  const flush = () => {
+    if (timer) window.clearTimeout(timer)
+    timer = 0
+    streamTimers.delete(key)
+    if (!draft) return
+    const next = draft
+    draft = undefined
+    const { index } = current()
+    if (index >= 0) messages.value[index] = next
     if (stickToBottom.value) void nextTick(scrollThreadToEnd)
+  }
+  const hold = (next: ShownMessage) => {
+    draft = next
+    if (timer) return
+    timer = window.setTimeout(flush, 150)
+    streamTimers.set(key, timer)
   }
   const apply = (kind: string) => (event: MessageEvent) => {
     const data = JSON.parse(event.data) as ConversationMessage & ConversationPart & { status?: ConversationMessage['status'] }
     const { index, message } = current()
-    if (index < 0 || !message) return
+    const base = draft ?? message
+    if (index < 0 || !base) return
     if (kind === 'snapshot') {
-      put(index, { ...(data as ConversationMessage), agentId, agentName: message.agentName, agentTag: message.agentTag })
+      draft = undefined
+      flush()
+      messages.value[index] = {
+        ...(data as ConversationMessage),
+        parts: packParts((data as ConversationMessage).parts),
+        agentId,
+        agentName: base.agentName,
+        agentTag: base.agentTag,
+      }
+      if (stickToBottom.value) void nextTick(scrollThreadToEnd)
       return
     }
     if (kind === 'done') {
-      put(index, { ...message, status: data.status === 'failed' ? 'failed' : 'done' })
+      draft = { ...base, status: data.status === 'failed' ? 'failed' : 'done' }
+      flush()
       source.close()
       if (streams.get(key) === source) streams.delete(key)
       return
     }
-    const parts = message.parts.slice()
+    const parts = base.parts.slice()
     if (kind === 'text' || kind === 'thinking') {
-      const last = parts[parts.length - 1]
-      if (last && last.kind === kind) parts[parts.length - 1] = { ...last, text: `${last.text || ''}${data.text || ''}` }
-      else parts.push({ kind, text: data.text || '' })
+      if (!mergeText(parts, kind, data.text || '')) parts.push({ kind, text: data.text || '' })
     } else if (kind === 'tool') {
       const found = parts.findIndex((part) => part.kind === 'tool' && part.id === data.id)
       if (found >= 0) parts[found] = { ...data, kind: 'tool' }
@@ -972,7 +1024,7 @@ function watchStream(number: string, agentId: string, seq: number) {
         parts.push({ kind: 'file', name: data.name, path: data.path })
       }
     }
-    put(index, { ...message, parts })
+    hold({ ...base, parts })
   }
   source.addEventListener('snapshot', apply('snapshot'))
   source.addEventListener('text', apply('text'))
@@ -982,15 +1034,23 @@ function watchStream(number: string, agentId: string, seq: number) {
   source.addEventListener('done', apply('done'))
   source.onerror = () => {
     const { message } = current()
-    if (!message || message.status !== 'running') {
+    const base = draft ?? message
+    if (!base || base.status !== 'running') {
+      flush()
       source.close()
       if (streams.get(key) === source) streams.delete(key)
       return
     }
     void fetchAgentConversation(number, agentId, seq).then((fresh) => {
       if (streams.get(key) !== source) return
-      const { index, message } = current()
-      if (index >= 0 && message) messages.value[index] = { ...fresh, agentId, agentName: message.agentName, agentTag: message.agentTag }
+      const { index } = current()
+      if (index >= 0) {
+        draft = undefined
+        if (timer) window.clearTimeout(timer)
+        timer = 0
+        streamTimers.delete(key)
+        messages.value[index] = { ...fresh, parts: packParts(fresh.parts), agentId, agentName: base.agentName, agentTag: base.agentTag }
+      }
       if (fresh.status !== 'running') {
         source.close()
         if (streams.get(key) === source) streams.delete(key)
@@ -999,7 +1059,27 @@ function watchStream(number: string, agentId: string, seq: number) {
   }
 }
 
+function partKey(message: ShownMessage, index: number): string {
+  return `${message.agentId}:${message.seq}:${index}`
+}
+
+function partOpen(message: ShownMessage, index: number): boolean {
+  return openParts.value.has(partKey(message, index))
+}
+
+function onPartToggle(message: ShownMessage, index: number, event: Event) {
+  const key = partKey(message, index)
+  const open = (event.target as HTMLDetailsElement).open
+  if (open === openParts.value.has(key)) return
+  const next = new Set(openParts.value)
+  if (open) next.add(key)
+  else next.delete(key)
+  openParts.value = next
+}
+
 function closeStream() {
+  for (const timer of streamTimers.values()) window.clearTimeout(timer)
+  streamTimers.clear()
   for (const source of streams.values()) source.close()
   streams.clear()
 }
@@ -1065,7 +1145,8 @@ onUnmounted(() => {
       </label>
       <span v-else-if="task.releaseOn" class="release-on">{{ task.releaseOn }} 发布</span>
       <p v-if="releaseError" class="release-error">{{ releaseError }}</p>
-      <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
+      <TaskPeople part="creator" labeled :creator="task.issue.author" />
+      <OwnerEdit labeled :code="task.code" :owners="task.owners ?? []" @saved="emit('owners', $event)" />
       <nav v-if="hasChildren" class="lane" aria-label="主 issue 和实现顺序">
         <button
           type="button"
@@ -1389,18 +1470,18 @@ onUnmounted(() => {
                 </template>
                 <time class="when" :datetime="messageStamp(message.createdAt)">{{ messageClock(message.createdAt) }}</time>
               </div>
-              <template v-for="(part, index) in message.parts" :key="`${message.seq}-${index}`">
-                <details v-if="part.kind === 'thinking'" class="thinking" :open="message.status === 'running'">
+              <template v-for="(part, partIndex) in message.parts" :key="`${message.agentId}-${message.seq}-${partIndex}`">
+                <details v-if="part.kind === 'thinking'" class="thinking" @toggle="onPartToggle(message, partIndex, $event)">
                   <summary>思考</summary>
-                  <p>{{ part.text }}</p>
+                  <p v-if="partOpen(message, partIndex)">{{ part.text }}</p>
                 </details>
-                <details v-else-if="part.kind === 'tool'" class="tool" :open="part.status != null && part.status !== 'done'">
+                <details v-else-if="part.kind === 'tool'" class="tool" @toggle="onPartToggle(message, partIndex, $event)">
                   <summary>
                     <span>{{ part.name || '工具' }}</span>
                     <em>{{ part.status === 'done' ? '完成' : '进行中' }}</em>
                   </summary>
-                  <pre v-if="part.arguments">{{ part.arguments }}</pre>
-                  <pre v-if="part.observation">{{ part.observation }}</pre>
+                  <pre v-if="partOpen(message, partIndex) && part.arguments">{{ part.arguments }}</pre>
+                  <pre v-if="partOpen(message, partIndex) && part.observation">{{ part.observation }}</pre>
                 </details>
                 <button v-else-if="part.kind === 'file'" type="button" class="file-ref" @click="openAttachment(part.path, message.agentId)">
                   {{ part.name || part.path }}

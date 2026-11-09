@@ -15,6 +15,9 @@ const authError = computed(() => {
   if (code === 'exchange') {
     return 'GitLab 登录没有完成，请再试一次。'
   }
+  if (code === 'offline') {
+    return '本地接口没有起来，登录跳不过去。'
+  }
   return ''
 })
 </script>

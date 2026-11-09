@@ -10,6 +10,8 @@ import org.slf4j.LoggerFactory;
 
 import org.springframework.stereotype.Component;
 
+import jakarta.annotation.PostConstruct;
+
 @Component
 public class GitlabGitEnv {
 
@@ -38,6 +40,15 @@ public class GitlabGitEnv {
 		this.properties = properties;
 	}
 
+	@PostConstruct
+	void noteOfflineToken() {
+		if (offline().isBlank()) {
+			log.warn("离线任务还没有配置 GitLab PAT");
+			return;
+		}
+		log.info("离线任务的提交和拉取使用已配置的 GitLab PAT");
+	}
+
 	public Map<String, String> forUser(long gitlabUserId) {
 		if (gitlabUserId <= 0) {
 			return Map.of();
@@ -50,11 +61,22 @@ public class GitlabGitEnv {
 	}
 
 	public Map<String, String> current() {
-		String token = credential.current();
-		if (token == null || token.isBlank()) {
-			return Map.of();
+		return env(offline(properties, credential), origin());
+	}
+
+	public String offline() {
+		return offline(properties, credential);
+	}
+
+	public static String offline(HelixProperties properties, GitlabSessionCredential credential) {
+		if (properties != null && properties.gitlab() != null) {
+			String configured = properties.gitlab().agentToken();
+			if (configured != null && !configured.isBlank()) {
+				return configured.strip();
+			}
 		}
-		return env(token, origin());
+		String current = credential == null ? null : credential.current();
+		return current == null ? "" : current;
 	}
 
 	static Map<String, String> env(String accessToken, String origin) {

@@ -8,7 +8,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 public record HelixProperties(String frontendUrl, Duration alignInterval, String boardFile, String workRoot,
 		String workPullTimes, Integer workSyncParallel, Gitlab gitlab) {
 
-	public record Gitlab(String baseUrl, String clientId, String clientSecret, String redirectUri, String scope) {
+	public record Gitlab(String baseUrl, String clientId, String clientSecret, String redirectUri, String scope,
+			String agentToken) {
 
 		public boolean configured() {
 			return present(clientId) && present(clientSecret);

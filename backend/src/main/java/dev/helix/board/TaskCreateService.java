@@ -19,13 +19,20 @@ public class TaskCreateService {
 
 	private final ProposalHandoff proposals;
 
-	public TaskCreateService(GitlabIssueClient gitlab, ProposalHandoff proposals) {
+	private final IssueListCache issueLists;
+
+	private final WorkspaceBoard boards;
+
+	public TaskCreateService(GitlabIssueClient gitlab, ProposalHandoff proposals, IssueListCache issueLists,
+			WorkspaceBoard boards) {
 		this.gitlab = gitlab;
 		this.proposals = proposals;
+		this.issueLists = issueLists;
+		this.boards = boards;
 	}
 
 	public CreatedIssue create(String accessToken, ProjectEntity project, String title, String kind,
-			Map<String, String> fields, List<String> attachments, boolean delegate) {
+			Map<String, String> fields, List<String> attachments, boolean delegate, String author) {
 		String heading = title == null ? "" : title.strip();
 		if (heading.isEmpty()) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "要写标题。");
@@ -40,10 +47,14 @@ public class TaskCreateService {
 		if (delegate) {
 			proposals.ensure(project);
 		}
+		String description = ProposalDraft.description(kind, fields, attachments);
+		List<String> labels = ProposalDraft.labels(kind);
 		try {
 			CreatedIssue created = gitlab.createIssue(accessToken, project.getGitHost(), project.getGitOwner(),
-					project.getGitRepo(), heading, ProposalDraft.description(kind, fields, attachments),
-					ProposalDraft.labels(kind));
+					project.getGitRepo(), heading, description, labels);
+			issueLists.insert(project.getId(), new GitlabIssueClient.IssueHead(created.iid(), heading, description,
+					author == null ? "" : author, "", "opened", labels));
+			boards.record(project, accessToken, created.iid(), author, null);
 			if (delegate) {
 				proposals.hand(project, created.iid());
 			}

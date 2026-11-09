@@ -206,7 +206,7 @@ async function save() {
             <button v-if="picked.status === '待上线池' && maintainer" type="button" class="go" :disabled="!draft || saving || movingCode === picked.code" @click="save">
               {{ saving ? '保存中' : '保存日期' }}
             </button>
-            <RouterLink class="open" :to="{ path: '/tasks', query: { task: picked.code } }">打开任务</RouterLink>
+            <RouterLink class="open" :to="{ name: 'tasks', params: { code: picked.code } }">打开任务</RouterLink>
           </div>
         </section>
         <section class="card">

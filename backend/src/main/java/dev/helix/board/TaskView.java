@@ -16,11 +16,16 @@ public record TaskView(
 		IssueSummary issue,
 		List<ChildIssueView> issues,
 		List<EdgeView> edges,
-		LocalDate releaseOn) {
+		LocalDate releaseOn,
+		List<String> owners) {
+
+	public TaskView {
+		owners = owners == null ? List.of() : List.copyOf(owners);
+	}
 
 	public TaskView release(LocalDate releaseOn) {
 		return new TaskView(code, description, owner, status, stage, hitl, startedAt, expectedEndAt, finishedAt, issue,
-				issues, edges, releaseOn);
+				issues, edges, releaseOn, owners);
 	}
 
 	public record IssueSummary(

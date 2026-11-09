@@ -17,7 +17,7 @@ const router = createRouter({
       component: () => import('../views/ProjectHome.vue'),
     },
     {
-      path: '/tasks',
+      path: '/tasks/:code?',
       name: 'tasks',
       component: HomeView,
     },
@@ -47,6 +47,11 @@ const router = createRouter({
       component: () => import('../views/AgentView.vue'),
     },
     {
+      path: '/observe',
+      name: 'observe',
+      component: () => import('../views/ObserveView.vue'),
+    },
+    {
       path: '/workers',
       name: 'workers',
       component: () => import('../views/WorkerView.vue'),
@@ -55,11 +60,6 @@ const router = createRouter({
       path: '/tasks/:code/spec',
       name: 'task-spec',
       component: () => import('../views/SpecView.vue'),
-    },
-    {
-      path: '/collab',
-      name: 'collab',
-      component: () => import('../views/CollabView.vue'),
     },
     {
       path: '/releases',

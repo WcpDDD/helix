@@ -68,7 +68,8 @@ public class TaskController {
 	@PostMapping("/tasks")
 	public ResponseEntity<CreatedTask> create(@RequestBody CreateTask request, HttpSession session) {
 		var created = taskCreateService.create(tokens.require(session), currentProject.resolve(session), request.title(),
-				request.kind(), request.fields(), request.attachments(), Boolean.TRUE.equals(request.delegate()));
+				request.kind(), request.fields(), request.attachments(), Boolean.TRUE.equals(request.delegate()),
+				author(session));
 		return ResponseEntity.status(HttpStatus.CREATED)
 				.body(new CreatedTask(Integer.toString(created.iid()), created.webUrl()));
 	}
@@ -100,6 +101,14 @@ public class TaskController {
 		}
 	}
 
+	@PutMapping("/tasks/{code}/owners")
+	public OwnersResponse owners(@PathVariable int code, @RequestBody OwnersRequest request, HttpSession session) {
+		ProjectEntity project = currentProject.resolve(session);
+		String token = tokens.require(session);
+		List<String> owners = taskStatusService.assignOwners(token, project.getId(), code, request.owners());
+		return new OwnersResponse(owners);
+	}
+
 	@PutMapping("/tasks/{code}/release")
 	public ReleaseResponse schedule(@PathVariable int code, @RequestBody ReleaseRequest request, HttpSession session) {
 		ProjectEntity project = currentProject.resolve(session);
@@ -118,10 +127,22 @@ public class TaskController {
 	public ResponseEntity<StatusResponse> transition(@PathVariable int code, @RequestBody StatusRequest request,
 			HttpSession session) {
 		TaskStatusService.Transition result = taskStatusService.transition(tokens.require(session),
-				currentProject.resolve(session).getId(), code, request.status(), request.releaseOn());
+				currentProject.resolve(session).getId(), code, request.status(), request.releaseOn(), request.owners());
 		StatusResponse body = new StatusResponse(result.status(), result.stage(), result.releaseOn());
 		HttpStatus http = result.synced() ? HttpStatus.OK : HttpStatus.CONFLICT;
 		return ResponseEntity.status(http).body(body);
+	}
+
+	private static String author(HttpSession session) {
+		if (session != null && session.getAttribute(AuthController.SESSION_USER) instanceof GitlabUser user) {
+			if (user.name() != null && !user.name().isBlank()) {
+				return user.name();
+			}
+			if (user.username() != null) {
+				return user.username();
+			}
+		}
+		return "";
 	}
 
 	private static GitlabUser user(HttpSession session) {
@@ -153,10 +174,16 @@ public class TaskController {
 	public record CreatedTask(String code, String url) {
 	}
 
-	public record StatusRequest(String status, String releaseOn) {
+	public record StatusRequest(String status, String releaseOn, java.util.List<String> owners) {
 	}
 
 	public record StatusResponse(String status, String stage, String releaseOn) {
+	}
+
+	public record OwnersRequest(java.util.List<String> owners) {
+	}
+
+	public record OwnersResponse(java.util.List<String> owners) {
 	}
 
 	public record ReleaseRequest(String releaseOn) {

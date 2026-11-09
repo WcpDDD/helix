@@ -28,3 +28,17 @@ data:
   NO_PROXY: .oalite.com,.svc,.cluster.local,localhost,127.0.0.1
   TZ: Asia/Shanghai
   JAVA_TOOL_OPTIONS: -Duser.timezone=Asia/Shanghai
+  JAVA_HOME: /opt/jdk-21
+  JAVA8_HOME: /usr/lib/jvm/java-8-amazon-corretto
+  JAVA21_HOME: /opt/jdk-21
+  GLAB: /root/.helix/toolchain/bin/glab
+  OPENSPEC: /usr/local/bin/openspec
+  PNPM: /usr/local/bin/pnpm
+  UV: /root/.helix/toolchain/bin/uv
+  RG: /usr/local/bin/rg
+  JQ: /usr/bin/jq
+  MYSQL: /usr/bin/mysql
+  GIT_AUTHOR_NAME: helix-worker
+  GIT_AUTHOR_EMAIL: helix-worker@oalite.com
+  GIT_COMMITTER_NAME: helix-worker
+  GIT_COMMITTER_EMAIL: helix-worker@oalite.com

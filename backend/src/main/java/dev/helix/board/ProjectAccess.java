@@ -44,8 +44,12 @@ public class ProjectAccess {
 	}
 
 	public void requireMaintainer(String accessToken, ProjectEntity project, GitlabUser user) {
+		requireMaintainer(accessToken, project, user, "只有维护者可以改预计上线时间。");
+	}
+
+	public void requireMaintainer(String accessToken, ProjectEntity project, GitlabUser user, String denied) {
 		if (!"maintainer".equals(of(accessToken, project, user))) {
-			throw new ResponseStatusException(HttpStatus.FORBIDDEN, "只有维护者可以改预计上线时间。");
+			throw new ResponseStatusException(HttpStatus.FORBIDDEN, denied);
 		}
 	}
 

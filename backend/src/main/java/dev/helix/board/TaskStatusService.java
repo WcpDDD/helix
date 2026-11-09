@@ -4,6 +4,7 @@ import java.time.LocalDate;
 import java.time.format.DateTimeParseException;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 
@@ -29,13 +30,16 @@ public class TaskStatusService {
 
 	private final ReleasePlanStore releases;
 
+	private final IssueListCache issueLists;
+
 	public TaskStatusService(IssueRepository issues, ProjectRepository projects, GitlabIssueClient gitlab,
-			WorkspaceBoard boards, ReleasePlanStore releases) {
+			WorkspaceBoard boards, ReleasePlanStore releases, IssueListCache issueLists) {
 		this.issues = issues;
 		this.projects = projects;
 		this.gitlab = gitlab;
 		this.boards = boards;
 		this.releases = releases;
+		this.issueLists = issueLists;
 	}
 
 	@Transactional
@@ -63,7 +67,8 @@ public class TaskStatusService {
 	}
 
 	@Transactional
-	public Transition transition(String accessToken, long projectId, int number, String requested, String releaseOn) {
+	public Transition transition(String accessToken, long projectId, int number, String requested, String releaseOn,
+			List<String> owners) {
 		if (!IssueStatusText.STATUSES.contains(requested)) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST);
 		}
@@ -75,6 +80,12 @@ public class TaskStatusService {
 				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
 		if (release != null) {
 			releases.save(project, number, release);
+		}
+		List<String> people = people(owners, false);
+		if (people != null) {
+			String creator = boards.current(projectId).authorOf(number);
+			boards.record(project, accessToken, number, creator.isBlank() ? cachedAuthor(projectId, number) : null,
+					people);
 		}
 		GitlabIssueClient.IssueDetail detail = load(accessToken, project, number);
 		String current = detail.description() == null ? "" : detail.description();
@@ -95,6 +106,7 @@ public class TaskStatusService {
 			return followIssue(accessToken, project, number);
 		}
 		issues.findInProject(projectId, number).ifPresent(main -> adopt(main, requested, stage));
+		issueLists.revise(projectId, number, next, labelsAfter(detail.labels(), label, remove), close);
 		return new Transition(requested, stage, true, release == null ? null : release.toString());
 	}
 
@@ -120,6 +132,57 @@ public class TaskStatusService {
 		return new Transition(issueStatus, stage, false, null);
 	}
 
+	private String cachedAuthor(long projectId, int number) {
+		List<GitlabIssueClient.IssueHead> heads = issueLists.get(projectId);
+		if (heads == null) {
+			return "";
+		}
+		for (GitlabIssueClient.IssueHead head : heads) {
+			if (head.iid() == number && head.author() != null && !head.author().isBlank()) {
+				return head.author();
+			}
+		}
+		return "";
+	}
+
+	public List<String> assignOwners(String accessToken, long projectId, int number, List<String> owners) {
+		List<String> people = people(owners, true);
+		if (boards.current(projectId).isChild(number)) {
+			throw new ResponseStatusException(HttpStatus.NOT_FOUND);
+		}
+		ProjectEntity project = projects.findById(projectId)
+				.orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND));
+		String creator = boards.current(projectId).authorOf(number);
+		boards.record(project, accessToken, number, creator.isBlank() ? cachedAuthor(projectId, number) : null, people);
+		return people;
+	}
+
+	private static List<String> people(List<String> raw, boolean allowEmpty) {
+		if (raw == null) {
+			if (allowEmpty) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "要给出负责人。");
+			}
+			return null;
+		}
+		List<String> names = new ArrayList<>();
+		for (String item : raw) {
+			if (item == null) {
+				continue;
+			}
+			String name = item.strip();
+			if (name.isEmpty() || name.indexOf('\n') >= 0 || name.indexOf('\r') >= 0) {
+				throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "负责人名字不对。");
+			}
+			if (!names.contains(name)) {
+				names.add(name);
+			}
+		}
+		if (names.isEmpty() && !allowEmpty) {
+			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "要选负责人。");
+		}
+		return names;
+	}
+
 	private static LocalDate releaseDate(String raw) {
 		if (raw == null || !raw.matches("\\d{4}-\\d{2}-\\d{2}")) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "进入待上线池需要发布日期。");
@@ -130,6 +193,20 @@ public class TaskStatusService {
 		catch (DateTimeParseException exception) {
 			throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "发布日期不对。");
 		}
+	}
+
+	private static List<String> labelsAfter(List<String> current, String add, List<String> remove) {
+		LinkedHashSet<String> labels = new LinkedHashSet<>();
+		if (current != null) {
+			labels.addAll(current);
+		}
+		if (remove != null) {
+			labels.removeAll(remove);
+		}
+		if (add != null && !add.isBlank()) {
+			labels.add(add);
+		}
+		return List.copyOf(labels);
 	}
 
 	private void adoptIfDeclared(IssueEntity main, GitlabIssueClient.IssueHead head) {

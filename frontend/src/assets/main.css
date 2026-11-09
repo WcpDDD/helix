@@ -13,7 +13,8 @@
 .shell:has(.skill-page),
 .shell:has(.agent-page),
 .shell:has(.schedule-page),
-.shell:has(.release-page) {
+.shell:has(.release-page),
+.shell:has(.observe-page) {
   display: flex;
   flex-direction: column;
   height: 100vh;

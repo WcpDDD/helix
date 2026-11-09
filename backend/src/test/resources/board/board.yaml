@@ -6,6 +6,7 @@
 # edges 只连接同一条任务里的子 issue。from 是前置，to 是后继。
 # needs_contract 为 true 时要看一份规格。contract_ref 是相对仓库根的路径，还没有就省略这一键。
 # needs_contract 为 false 时，这条边只表示实现顺序，不写 contract_ref。
+# author 是创建人。owners 是负责人，可以有多个人。没有写就还没有。
 version: 1
 tasks:
   - main: 12

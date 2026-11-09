@@ -103,7 +103,7 @@ class GitlabOAuthClientTest {
 
 	private static GitlabOAuthClient client(RestClient.Builder builder) {
 		HelixProperties.Gitlab gitlab = new HelixProperties.Gitlab("https://hackers.oalite.com/", "test-client", "test-secret",
-				"http://127.0.0.1:5173/api/auth/gitlab/callback", "read_user");
+				"http://127.0.0.1:5173/api/auth/gitlab/callback", "read_user", "");
 		return new GitlabOAuthClient(gitlab, builder.build());
 	}
 

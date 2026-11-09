@@ -20,7 +20,6 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.ReentrantLock;
 
-import dev.helix.auth.GitlabSessionCredential;
 import dev.helix.auth.GitlabUser;
 import dev.helix.board.AgentEntity;
 import dev.helix.board.AgentRepository;
@@ -57,8 +56,6 @@ public class HomeAgentService {
 
 	private final ProjectWorkspaces workspaces;
 
-	private final GitlabSessionCredential credential;
-
 	private final HomeObjectStore objects;
 
 	private final HomeSessionRepository sessions;
@@ -79,7 +76,7 @@ public class HomeAgentService {
 
 	private final Map<Key, Talk> open = new ConcurrentHashMap<>();
 
-	public HomeAgentService(AgentKitProperties properties, ProjectWorkspaces workspaces, GitlabSessionCredential credential,
+	public HomeAgentService(AgentKitProperties properties, ProjectWorkspaces workspaces,
 			HomeObjectStore objects, HomeSessionRepository sessions, PlatformTransactionManager transactions,
 			AgentRepository agents, ProjectRepository projects, SampleAgents samples, dev.helix.board.AgentAudience audience,
 			dev.helix.auth.LdapAccountService ldap, dev.helix.auth.GitlabGitEnv git) {
@@ -94,7 +91,6 @@ public class HomeAgentService {
 		this.samples = samples;
 		this.properties = properties;
 		this.workspaces = workspaces;
-		this.credential = credential;
 		this.objects = objects;
 		this.sessions = sessions;
 		this.transactions = new TransactionTemplate(transactions);
@@ -114,6 +110,28 @@ public class HomeAgentService {
 		catch (IOException exception) {
 			System.out.println("旧的首页会话没有迁进数据库");
 		}
+	}
+
+	public List<ServerRun> running(long projectId) {
+		List<ServerRun> found = new ArrayList<>();
+		for (Map.Entry<Key, Talk> entry : open.entrySet()) {
+			if (entry.getKey().projectId() != projectId) {
+				continue;
+			}
+			Talk talk = entry.getValue();
+			String sessionId;
+			List<HomeMessage> messages;
+			synchronized (talk) {
+				if (!talk.busy) {
+					continue;
+				}
+				sessionId = talk.sessionId;
+				messages = talk.copy();
+			}
+			String username = sessions.findById(sessionId).map(HomeSessionEntity::getUsername).orElse("");
+			found.add(new ServerRun(sessionId, entry.getKey().userId(), username, messages));
+		}
+		return List.copyOf(found);
 	}
 
 	public HomeView read(ProjectEntity project, GitlabUser user) {
@@ -504,7 +522,7 @@ public class HomeAgentService {
 		if (opened != null) {
 			return opened;
 		}
-		String token = credential.current();
+		String token = git.offline();
 		if (!blank(token)) {
 			workspaces.prepare(project, token);
 			opened = workspaces.opened(project);
@@ -596,6 +614,9 @@ public class HomeAgentService {
 
 	private static boolean blank(String value) {
 		return value == null || value.isBlank();
+	}
+
+	public record ServerRun(String sessionId, long userId, String username, List<HomeMessage> messages) {
 	}
 
 	public record HomeView(String workspace, boolean preparing, String sessionId, long userId, String username,

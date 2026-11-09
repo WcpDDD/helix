@@ -9,5 +9,11 @@ export interface TaskTransitionResult {
 }
 
 export const taskTransitionKey: InjectionKey<
-  (code: string, status: TaskStatus, stage: TaskStage, releaseOn?: string | null) => Promise<TaskTransitionResult>
+  (
+    code: string,
+    status: TaskStatus,
+    stage: TaskStage,
+    releaseOn?: string | null,
+    owners?: string[],
+  ) => Promise<TaskTransitionResult>
 > = Symbol('taskTransition')

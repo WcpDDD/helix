@@ -56,4 +56,25 @@ class WorkPullSchedulerTest {
 		}
 	}
 
+	@Test
+	void heartbeatPullsWithTheConfiguredPat() {
+		ProjectWorkspaces workspaces = mock(ProjectWorkspaces.class);
+		ProjectRepository projects = mock(ProjectRepository.class);
+		GitlabSessionCredential credential = new GitlabSessionCredential();
+		credential.remember("someone-else");
+		ProjectEntity project = new ProjectEntity("轻流", "hackers.oalite.com", "qingflow-develop", "qingflow-workspace");
+		when(projects.findAll()).thenReturn(List.of(project));
+		when(workspaces.opened(project)).thenReturn(Path.of("work"));
+		HelixProperties properties = new HelixProperties(null, null, null, null, "09:00,13:00,18:00", 2,
+				new HelixProperties.Gitlab(null, null, null, null, null, "agent-pat"));
+		WorkPullScheduler scheduler = new WorkPullScheduler(workspaces, projects, credential, properties, false);
+		try {
+			scheduler.follow(LocalDateTime.of(2026, 10, 22, 10, 30));
+			verify(workspaces).requestPull(project, "agent-pat");
+		}
+		finally {
+			scheduler.close();
+		}
+	}
+
 }

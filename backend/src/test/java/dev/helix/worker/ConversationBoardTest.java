@@ -79,6 +79,35 @@ class ConversationBoardTest {
 	}
 
 	@Test
+	void alternatingChunksStayOneThinkingAndOneText() throws Exception {
+		ConversationBoard board = new ConversationBoard(temp.resolve("workers"), Map.of("HELIX_REPO", repo().toString()),
+				(thread, message, workspace, env, sink, profile) -> {
+					sink.onChunk(new ExecutionChunk(null, "想", List.of(), null));
+					sink.onChunk(new ExecutionChunk("文", null, List.of(), null));
+					sink.onChunk(new ExecutionChunk(null, "再想", List.of(), null));
+					sink.onChunk(new ExecutionChunk("再写", null, List.of(), null));
+					sink.onEvent(new ExecutionEvent.RunEnded(ExecutionPhase.COMPLETED, "文再写", null, null));
+				});
+
+		JsonNode sent = json.readTree(board.send(21, "{\"text\":\"看看\"}").body());
+		JsonNode assistant = json.readTree(board.content(21, sent.path("assistant").path("seq").asLong()).body());
+		int thinking = 0;
+		int text = 0;
+		for (JsonNode part : assistant.path("parts")) {
+			if ("thinking".equals(part.path("kind").asString())) {
+				thinking++;
+				assertThat(part.path("text").asString()).isEqualTo("想再想");
+			}
+			if ("text".equals(part.path("kind").asString())) {
+				text++;
+				assertThat(part.path("text").asString()).isEqualTo("文再写");
+			}
+		}
+		assertThat(thinking).isEqualTo(1);
+		assertThat(text).isEqualTo(1);
+	}
+
+	@Test
 	void rejectsASecondMessageWhileTheFirstIsRunning() throws Exception {
 		ConversationBoard board = new ConversationBoard(temp.resolve("workers"), Map.of("HELIX_REPO", repo().toString()),
 				(thread, message, workspace, env, sink, profile) -> {

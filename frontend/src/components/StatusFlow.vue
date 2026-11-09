@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, ref, watch } from 'vue'
-import { directory } from '@/data/people'
-import { pendingIssueId, rememberOwners } from '@/data/statusDraft'
+import { directory, loadDirectory, type DirectoryPerson } from '@/data/people'
+import { pendingIssueId } from '@/data/statusDraft'
 import { taskTransitionKey } from '@/data/taskTransition'
 import { movesFor, stageFor, type Move } from '@/data/transitions'
 import { statusTone, type TaskStage, type TaskStatus } from '@/data/tasks'
@@ -28,7 +28,7 @@ const settle = inject(taskTransitionKey)
 const filteredPeople = computed(() => {
   const text = query.value.trim().toLowerCase()
   if (!text) return directory.value
-  return directory.value.filter((name) => name.toLowerCase().includes(text))
+  return directory.value.filter((person) => person.name.toLowerCase().includes(text) || person.login.toLowerCase().includes(text))
 })
 const canConfirm = computed(() => {
   if (!pending.value) return false
@@ -63,19 +63,37 @@ watch(pendingIssueId, (id) => {
   }
 })
 
+watch(directory, () => {
+  if (!pending.value?.needsOwners) return
+  picked.value = [...new Set(picked.value.map(personId))]
+})
+
+void loadDirectory()
+
+function personId(owner: string): string {
+  return directory.value.find((person) => person.login === owner || person.name === owner)?.login ?? owner
+}
+
+function personName(id: string): string {
+  return directory.value.find((person) => person.login === id)?.name ?? id
+}
+
 function pick(move: Move) {
   if (move.disabledReason) return
   pendingIssueId.value = props.issueId
   pending.value = move
   reason.value = ''
   releaseOn.value = ''
-  picked.value = move.needsOwners ? [...props.owners] : []
+  picked.value = move.needsOwners ? [...new Set(props.owners.map(personId))] : []
   query.value = ''
   othersOpen.value = false
+  void loadDirectory()
 }
 
-function toggleOwner(name: string) {
-  picked.value = picked.value.includes(name) ? picked.value.filter((item) => item !== name) : [...picked.value, name]
+function toggleOwner(person: DirectoryPerson) {
+  picked.value = picked.value.includes(person.login)
+    ? picked.value.filter((item) => item !== person.login)
+    : [...picked.value, person.login]
 }
 
 function cancel() {
@@ -94,8 +112,8 @@ async function confirm() {
   notice.value = ''
   const stage = stageFor(move.to, props.stage)
   try {
-    const result = await settle(props.issueId, move.to, stage, move.needsRelease ? releaseOn.value : null)
-    if (move.needsOwners && result.synced) rememberOwners(props.issueId, [...picked.value])
+    const owners = move.needsOwners ? picked.value.map(personName) : undefined
+    const result = await settle(props.issueId, move.to, stage, move.needsRelease ? releaseOn.value : null, owners)
     if (result.synced) {
       cancel()
       return
@@ -132,23 +150,24 @@ async function confirm() {
       <div v-if="pending.needsOwners" class="owners">
         <span class="owners-label">负责人 <span v-if="picked.length > 0">已选 {{ picked.length }} 人</span></span>
         <div v-if="picked.length > 0" class="picked">
-          <button v-for="name in picked" :key="name" type="button" class="chip" @click="toggleOwner(name)">
-            {{ name }}
+          <button v-for="id in picked" :key="id" type="button" class="chip" @click="picked = picked.filter((item) => item !== id)">
+            {{ personName(id) }}
             <span aria-hidden="true">×</span>
           </button>
         </div>
-        <input v-model="query" type="search" placeholder="搜索姓名" />
+        <input v-model="query" type="search" placeholder="搜索姓名或登录名" />
         <div class="member-list">
           <button
-            v-for="name in filteredPeople"
-            :key="name"
+            v-for="person in filteredPeople"
+            :key="person.login"
             type="button"
             class="member"
-            :class="{ on: picked.includes(name) }"
-            @click="toggleOwner(name)"
+            :class="{ on: picked.includes(person.login) }"
+            @click="toggleOwner(person)"
           >
-            <span class="avatar" aria-hidden="true">{{ name.slice(0, 1) }}</span>
-            {{ name }}
+            <span class="avatar" aria-hidden="true">{{ person.name.slice(0, 1) }}</span>
+            <span>{{ person.name }}</span>
+            <span v-if="person.login !== person.name" class="login">{{ person.login }}</span>
           </button>
           <p v-if="filteredPeople.length === 0" class="empty">没有匹配的人</p>
         </div>
@@ -352,8 +371,12 @@ input {
 }
 
 .member-list {
-  max-height: 160px;
+  max-height: 240px;
   overflow: auto;
+}
+
+.login {
+  color: var(--muted);
 }
 
 .chip,

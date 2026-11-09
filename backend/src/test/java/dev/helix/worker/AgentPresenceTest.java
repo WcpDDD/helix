@@ -19,6 +19,8 @@ class AgentPresenceTest {
 		presence.replace("worker-local", List.of(new AgentPresence.Reported(235, "developer")));
 
 		assertThat(presence.running(235)).isPresent();
+		assertThat(presence.sights()).extracting(AgentPresence.Sight::workerId, AgentPresence.Sight::issue)
+				.containsExactly(org.assertj.core.groups.Tuple.tuple("worker-local", 235));
 
 		presence.replace("worker-local", List.of());
 

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { RouterLink, RouterView, useRoute, useRouter } from 'vue-router'
 import { useLdapAccountStore } from '@/stores/ldapAccount'
 import { useProjectStore } from '@/stores/projects'
@@ -10,6 +10,7 @@ const ldap = useLdapAccountStore()
 const projects = useProjectStore()
 const route = useRoute()
 const router = useRouter()
+const maintainer = computed(() => projects.access === 'maintainer')
 const menuOpen = ref(false)
 const switchEl = ref<HTMLElement | null>(null)
 let workTimer = 0
@@ -107,9 +108,9 @@ onUnmounted(() => {
         <RouterLink to="/skills">Skill</RouterLink>
         <RouterLink to="/members">成员</RouterLink>
         <RouterLink to="/agents">Agent</RouterLink>
+        <RouterLink v-if="maintainer" to="/observe">观测</RouterLink>
         <RouterLink to="/workers">Worker</RouterLink>
         <RouterLink to="/schedule">调度</RouterLink>
-        <RouterLink to="/collab">协同</RouterLink>
       </nav>
       <div v-if="session.user" class="bar-end">
         <div ref="switchEl" class="project-switch">
@@ -149,6 +150,7 @@ onUnmounted(() => {
         <div class="account">
           <img v-if="session.user.avatarUrl" class="avatar" :src="session.user.avatarUrl" alt="" />
           <span class="who">{{ session.user.name }}</span>
+          <RouterLink class="account-link" :class="{ set: ldap.uid.length > 0 }" to="/account">账号</RouterLink>
           <button type="button" class="text-button" @click="signOut">退出</button>
         </div>
       </div>

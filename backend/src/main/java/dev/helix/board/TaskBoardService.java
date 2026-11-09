@@ -27,16 +27,18 @@ public class TaskBoardService {
 	private final WorkspaceBoard boards;
 	private final GitlabIssueClient gitlab;
 	private final ReleasePlanStore releases;
+	private final IssueListCache issueLists;
 
 	public TaskBoardService(IssueRepository issues, IssueMergeRequestRepository mergeRequests,
 			IssueEnvironmentRepository environments, WorkspaceBoard boards, GitlabIssueClient gitlab,
-			ReleasePlanStore releases) {
+			ReleasePlanStore releases, IssueListCache issueLists) {
 		this.issues = issues;
 		this.mergeRequests = mergeRequests;
 		this.environments = environments;
 		this.boards = boards;
 		this.gitlab = gitlab;
 		this.releases = releases;
+		this.issueLists = issueLists;
 	}
 
 	@Transactional
@@ -87,7 +89,8 @@ public class TaskBoardService {
 					summary(issue, requestsByIssue, environmentsByIssue),
 					children,
 					edges,
-					null));
+					null,
+					ownerNames(issue.getOwner().getDisplayName())));
 		}
 		views.sort(Comparator.comparingInt((TaskView view) -> Integer.parseInt(view.code())).reversed());
 		ProjectEntity project = issueRows.get(0).getProject();
@@ -95,9 +98,32 @@ public class TaskBoardService {
 	}
 
 	public List<TaskView> listCheckout(ProjectEntity project, BoardFile board, String token) {
-		List<GitlabIssueClient.IssueHead> heads;
+		return dated(project, arrange(project, board, cached(project, token)));
+	}
+
+	public void pull(ProjectEntity project, String token) {
+		int ticket = issueLists.begin(project.getId());
+		List<GitlabIssueClient.IssueHead> heads = readIssues(project, token);
+		issueLists.store(project.getId(), ticket, heads);
+	}
+
+	private List<GitlabIssueClient.IssueHead> cached(ProjectEntity project, String token) {
+		for (int attempt = 0; attempt < 2; attempt++) {
+			List<GitlabIssueClient.IssueHead> heads = issueLists.get(project.getId());
+			if (heads != null) {
+				return heads;
+			}
+			pull(project, token);
+		}
+		List<GitlabIssueClient.IssueHead> heads = issueLists.get(project.getId());
+		return heads == null ? List.of() : heads;
+	}
+
+	private List<GitlabIssueClient.IssueHead> readIssues(ProjectEntity project, String token) {
 		try {
-			heads = gitlab.issues(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo());
+			List<GitlabIssueClient.IssueHead> heads = gitlab.issues(token, project.getGitHost(), project.getGitOwner(),
+					project.getGitRepo(), IssueListCache.LIMIT);
+			return heads == null ? List.of() : heads;
 		}
 		catch (GitlabIssueException exception) {
 			if (exception.status() == 401 || exception.status() == 403) {
@@ -105,7 +131,6 @@ public class TaskBoardService {
 			}
 			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "任务没有从主分支对应的 issue 读到。");
 		}
-		return dated(project, arrange(project, board, heads));
 	}
 
 	private List<TaskView> dated(ProjectEntity project, List<TaskView> views) {
@@ -164,8 +189,14 @@ public class TaskBoardService {
 			String to = Integer.toString(edge.to());
 			edges.add(new TaskView.EdgeView(from + "-" + to, from, to, edge.needsContract(), edge.contractRef()));
 		}
-		return new TaskView(Integer.toString(number), titleOf(number, head), ownerOf(head), status, stage, hitl(head), null,
-				null, null, summaryFromHead(project, number, head), children, edges, null);
+		List<String> owners = board.ownersOf(number);
+		String creator = board.authorOf(number);
+		if (creator.isBlank()) {
+			creator = authorOf(head);
+		}
+		return new TaskView(Integer.toString(number), titleOf(number, head), owners.isEmpty() ? "" : owners.get(0),
+				status, stage, hitl(head), null, null, null, summaryFromHead(project, number, head, creator), children,
+				edges, null, owners);
 	}
 
 	private TaskView.IssueSummary summary(IssueEntity issue, Map<Long, List<TaskView.MergeRequestView>> requests,
@@ -216,9 +247,17 @@ public class TaskBoardService {
 	}
 
 	private static TaskView.IssueSummary summaryFromHead(ProjectEntity project, int number,
-			GitlabIssueClient.IssueHead head) {
-		return new TaskView.IssueSummary(issueUrl(project, number), "", authorOf(head), "", "", "", "", "", List.of(),
+			GitlabIssueClient.IssueHead head, String creator) {
+		String author = creator == null || creator.isBlank() ? authorOf(head) : creator;
+		return new TaskView.IssueSummary(issueUrl(project, number), "", author, "", "", "", "", "", List.of(),
 				List.of());
+	}
+
+	private static List<String> ownerNames(String name) {
+		if (name == null || name.isBlank()) {
+			return List.of();
+		}
+		return List.of(name);
 	}
 
 	private static boolean hitl(GitlabIssueClient.IssueHead head) {

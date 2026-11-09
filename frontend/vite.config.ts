@@ -30,6 +30,18 @@ export default defineConfig({
             proxyRes.headers['cache-control'] = 'no-cache, no-transform'
             proxyRes.headers['x-accel-buffering'] = 'no'
           })
+          proxy.on('error', (error, req, res) => {
+            if (!res || !('writeHead' in res) || res.headersSent) return
+            const url = req.url ?? ''
+            const accept = String(req.headers.accept ?? '')
+            if (accept.includes('text/html') || url.startsWith('/api/auth/')) {
+              res.writeHead(302, { Location: '/login?auth_error=offline' })
+              res.end()
+              return
+            }
+            res.writeHead(502, { 'Content-Type': 'text/plain; charset=utf-8' })
+            res.end('本地接口没有起来。')
+          })
         },
       },
     },

@@ -7,6 +7,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,10 @@ import io.agentkit.api.execution.ExecutionPhase;
 public final class ConversationBoard {
 
 	static final int PAGE = 10;
+
+	private static final int LISTENER_QUEUE = 256;
+
+	private static final String OVERFLOW = "event: overflow\ndata: {}\n\n";
 
 	private final Path root;
 
@@ -245,7 +250,7 @@ public final class ConversationBoard {
 
 	public void writeStream(int issueNumber, String agentId, long seq, OutputStream out) throws IOException {
 		IssueTalk talk = talk(issueNumber, agentId);
-		BlockingQueue<String> queue = new LinkedBlockingQueue<>();
+		BlockingQueue<String> queue = new LinkedBlockingQueue<>(LISTENER_QUEUE);
 		String snapshot;
 		boolean live;
 		synchronized (talk.lock) {
@@ -277,6 +282,9 @@ public final class ConversationBoard {
 				if (next == null) {
 					write(out, ": ping\n\n");
 					continue;
+				}
+				if (next.startsWith("event: overflow")) {
+					return;
 				}
 				write(out, next);
 				if (next.startsWith("event: done")) {
@@ -362,7 +370,7 @@ public final class ConversationBoard {
 			if (chunk.text() != null && !chunk.text().isEmpty()) {
 				appendText(talk, message, "text", chunk.text());
 			}
-			save(talk);
+			remember(talk, false);
 		}
 	}
 
@@ -486,9 +494,9 @@ public final class ConversationBoard {
 
 	private void appendText(IssueTalk talk, ObjectNode message, String kind, String delta) {
 		ArrayNode parts = parts(message);
-		JsonNode last = parts.isEmpty() ? null : parts.get(parts.size() - 1);
-		if (last != null && kind.equals(last.path("kind").asString(""))) {
-			((ObjectNode) last).put("text", last.path("text").asString("") + delta);
+		ObjectNode target = openText(parts, kind);
+		if (target != null) {
+			target.put("text", target.path("text").asString("") + delta);
 		}
 		else {
 			ObjectNode part = parts.addObject();
@@ -500,14 +508,65 @@ public final class ConversationBoard {
 		publish(talk, message.path("seq").asLong(), kind, payload);
 	}
 
+	private static ObjectNode openText(ArrayNode parts, String kind) {
+		for (int i = parts.size() - 1; i >= 0; i--) {
+			JsonNode prev = parts.get(i);
+			String prevKind = prev.path("kind").asString("");
+			if ("tool".equals(prevKind) || "file".equals(prevKind)) {
+				return null;
+			}
+			if (kind.equals(prevKind) && prev instanceof ObjectNode node) {
+				return node;
+			}
+		}
+		return null;
+	}
+
+	private ArrayNode pack(ArrayNode parts) {
+		ArrayNode packed = json.createArrayNode();
+		for (JsonNode part : parts) {
+			String kind = part.path("kind").asString("");
+			if ("text".equals(kind) || "thinking".equals(kind)) {
+				ObjectNode target = openText(packed, kind);
+				if (target != null) {
+					target.put("text", target.path("text").asString("") + part.path("text").asString(""));
+					continue;
+				}
+			}
+			packed.add(part.deepCopy());
+		}
+		return packed;
+	}
+
+	private void remember(IssueTalk talk, boolean now) {
+		long at = System.currentTimeMillis();
+		if (!now && at - talk.savedAt < 1000) {
+			talk.dirty = true;
+			return;
+		}
+		save(talk);
+		talk.savedAt = at;
+		talk.dirty = false;
+	}
+
 	private void publish(IssueTalk talk, long seq, String event, JsonNode data) {
 		List<BlockingQueue<String>> queues = talk.listeners.get(seq);
 		if (queues == null) {
 			return;
 		}
 		String frame = frame(event, data);
-		for (BlockingQueue<String> queue : queues) {
-			queue.offer(frame);
+		Iterator<BlockingQueue<String>> pending = queues.iterator();
+		while (pending.hasNext()) {
+			BlockingQueue<String> queue = pending.next();
+			if (queue.offer(frame)) {
+				continue;
+			}
+			queue.clear();
+			queue.offer(OVERFLOW);
+			pending.remove();
+		}
+		if (queues.isEmpty()) {
+			talk.listeners.remove(seq, queues);
 		}
 	}
 
@@ -662,12 +721,17 @@ public final class ConversationBoard {
 			if (messages != null && messages.isArray()) {
 				boolean repair = false;
 				for (JsonNode node : messages) {
-					if (node instanceof ObjectNode message && message.get("parts") instanceof ArrayNode) {
+					if (node instanceof ObjectNode message && message.get("parts") instanceof ArrayNode parts) {
 						if ("running".equals(message.path("status").asString(""))) {
 							message.put("status", "failed");
-							ObjectNode note = ((ArrayNode) message.get("parts")).addObject();
+							ObjectNode note = parts.addObject();
 							note.put("kind", "text");
 							note.put("text", "这轮在 worker 重启时中断了。");
+							repair = true;
+						}
+						ArrayNode packed = pack(parts);
+						if (packed.size() != parts.size()) {
+							message.set("parts", packed);
 							repair = true;
 						}
 						talk.messages.add(message);
@@ -675,6 +739,7 @@ public final class ConversationBoard {
 				}
 				if (repair) {
 					save(talk);
+					talk.savedAt = System.currentTimeMillis();
 				}
 			}
 		}
@@ -821,6 +886,10 @@ public final class ConversationBoard {
 		private final Map<Long, List<BlockingQueue<String>>> listeners = new ConcurrentHashMap<>();
 
 		private boolean busy;
+
+		private boolean dirty;
+
+		private long savedAt;
 
 		private String threadId;
 

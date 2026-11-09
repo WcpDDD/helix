@@ -88,8 +88,19 @@ public final class WorkerProcess {
 		command.addAll(ManagementFactory.getRuntimeMXBean().getInputArguments());
 		command.add("-cp");
 		command.add(System.getProperty("java.class.path"));
-		command.add(WorkerProcess.class.getName());
+		command.add(entryClass());
 		return List.copyOf(command);
+	}
+
+	// PropertiesLauncher 把业务类放在 jar 里面。重启用原来的启动类，loader.main 才会再次找到 WorkerProcess。
+	static String entryClass() {
+		String launched = System.getProperty("sun.java.command", "");
+		int space = launched.indexOf(' ');
+		String first = space < 0 ? launched : launched.substring(0, space);
+		if (first.endsWith("PropertiesLauncher") || first.endsWith("JarLauncher")) {
+			return first;
+		}
+		return WorkerProcess.class.getName();
 	}
 
 	private static void loadToolchain() {

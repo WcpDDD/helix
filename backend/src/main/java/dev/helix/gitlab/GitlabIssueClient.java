@@ -288,7 +288,7 @@ public class GitlabIssueClient {
 		return issues(accessToken, gitHost, owner, repo, 500);
 	}
 
-	List<IssueHead> issues(String accessToken, String gitHost, String owner, String repo, int limit) {
+	public List<IssueHead> issues(String accessToken, String gitHost, String owner, String repo, int limit) {
 		String origin = origin(gitHost);
 		String project = URLEncoder.encode(owner + "/" + repo, StandardCharsets.UTF_8);
 		List<IssueHead> found = new ArrayList<>();

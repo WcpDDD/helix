@@ -4,15 +4,16 @@ withDefaults(
     creator?: string
     owners?: string[]
     part?: 'all' | 'creator' | 'owners'
+    labeled?: boolean
   }>(),
-  { owners: () => [], part: 'all' },
+  { owners: () => [], part: 'all', labeled: false },
 )
 </script>
 
 <template>
   <div class="people">
     <div v-if="part !== 'owners'" class="line">
-      <span v-if="part === 'all'" class="k">创建人</span>
+      <span v-if="part === 'all' || labeled" class="k">创建人</span>
       <span class="who">
         <span class="avatar" aria-hidden="true">{{ creator?.slice(0, 1) }}</span>
         {{ creator }}

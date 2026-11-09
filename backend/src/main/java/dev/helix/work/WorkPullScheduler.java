@@ -9,6 +9,7 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
 
+import dev.helix.auth.GitlabGitEnv;
 import dev.helix.auth.GitlabSessionCredential;
 import dev.helix.board.ProjectEntity;
 import dev.helix.board.ProjectRepository;
@@ -35,6 +36,8 @@ public class WorkPullScheduler {
 
 	private final GitlabSessionCredential credential;
 
+	private final HelixProperties properties;
+
 	private final Set<LocalTime> times;
 
 	private final ScheduledExecutorService executor;
@@ -54,6 +57,7 @@ public class WorkPullScheduler {
 		this.workspaces = workspaces;
 		this.projects = projects;
 		this.credential = credential;
+		this.properties = properties;
 		String configured = properties == null ? null : properties.workPullTimes();
 		this.times = timesOf(configured == null || configured.isBlank() ? DEFAULT_TIMES : configured);
 		this.executor = Executors.newSingleThreadScheduledExecutor(runnable -> {
@@ -77,8 +81,8 @@ public class WorkPullScheduler {
 		if (mark == null || mark.equals(fired)) {
 			return;
 		}
-		String token = credential.current();
-		if (token == null || token.isBlank()) {
+		String token = token();
+		if (token.isBlank()) {
 			return;
 		}
 		fired = mark;
@@ -89,8 +93,8 @@ public class WorkPullScheduler {
 		if (followed != null && now.isBefore(followed.plusSeconds(FOLLOW_SECONDS))) {
 			return;
 		}
-		String token = credential.current();
-		if (token == null || token.isBlank()) {
+		String token = token();
+		if (token.isBlank()) {
 			return;
 		}
 		followed = now;
@@ -109,6 +113,10 @@ public class WorkPullScheduler {
 				// 这个目录正在拉取或推送，这一轮跳过。
 			}
 		}
+	}
+
+	private String token() {
+		return GitlabGitEnv.offline(properties, credential);
 	}
 
 	static Set<LocalTime> timesOf(String text) {

@@ -337,6 +337,72 @@ export function fetchWorkers(): Promise<WorkerRecord[]> {
   return getJson<WorkerRecord[]>('/api/workers')
 }
 
+export interface ObserveRun {
+  place: 'worker' | 'server'
+  workerId: string
+  workerName: string
+  issue: number
+  agent: string
+  sessionId: string
+  username: string
+  title: string
+  activity: string
+  at: string
+}
+
+export interface ObserveTool {
+  name: string
+  status: string
+  arguments: string
+  observation: string
+}
+
+export interface ObserveTurn {
+  role: string
+  status: string
+  text: string
+  reasoning: string
+  at: string
+  tools: ObserveTool[]
+}
+
+export interface ObserveDetail {
+  place: 'worker' | 'server'
+  workerName: string
+  issue: number
+  agent: string
+  username: string
+  title: string
+  activity: string
+  note: string
+  turns: ObserveTurn[]
+}
+
+async function observeError(response: Response, fallback: string): Promise<never> {
+  const body = await response.json().catch(() => null)
+  const message = body && typeof body.detail === 'string' && body.detail ? body.detail : fallback
+  throw new Error(message)
+}
+
+export async function fetchObserveRuns(): Promise<ObserveRun[]> {
+  const response = await fetch('/api/observe/runs')
+  if (!response.ok) await observeError(response, '运行情况没有读到。')
+  return response.json() as Promise<ObserveRun[]>
+}
+
+export async function fetchObserveDetail(run: ObserveRun): Promise<ObserveDetail> {
+  const query = new URLSearchParams({
+    place: run.place,
+    worker: run.workerId,
+    issue: String(run.issue),
+    agent: run.agent,
+    sessionId: run.sessionId,
+  })
+  const response = await fetch(`/api/observe/runs/open?${query}`)
+  if (!response.ok) await observeError(response, '这轮运行没有读到。')
+  return response.json() as Promise<ObserveDetail>
+}
+
 export interface AgentSession {
   assigned: boolean
   alive: boolean
@@ -604,17 +670,36 @@ export async function transitionTask(
   status: TaskStatus,
   stage: TaskStage,
   releaseOn?: string | null,
+  owners?: string[],
 ): Promise<TaskTransitionResult> {
   const response = await fetch(`/api/tasks/${encodeURIComponent(code)}/status`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ status, stage, releaseOn: releaseOn || null }),
+    body: JSON.stringify({
+      status,
+      stage,
+      releaseOn: releaseOn || null,
+      ...(owners && owners.length > 0 ? { owners } : {}),
+    }),
   })
   if (response.status !== 200 && response.status !== 409) {
     throw new Error(`${response.status}`)
   }
   const body = (await response.json()) as { status: TaskStatus; stage: TaskStage; releaseOn?: string | null }
   return { status: body.status, stage: body.stage, synced: response.status === 200, releaseOn: body.releaseOn ?? null }
+}
+
+export async function saveOwners(code: string, owners: string[]): Promise<string[]> {
+  const response = await fetch(`/api/tasks/${encodeURIComponent(code)}/owners`, {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ owners }),
+  })
+  if (!response.ok) {
+    throw new Error('负责人没有保存。')
+  }
+  const body = (await response.json()) as { owners?: string[] }
+  return body.owners ?? []
 }
 
 export async function scheduleRelease(code: string, releaseOn: string): Promise<string> {

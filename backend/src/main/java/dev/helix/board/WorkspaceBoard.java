@@ -5,6 +5,8 @@ import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
+import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 
@@ -17,7 +19,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.springframework.core.io.ClassPathResource;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 
 @Component
 public class WorkspaceBoard {
@@ -36,6 +40,8 @@ public class WorkspaceBoard {
 
 	private final ConcurrentMap<Long, BoardFile> cache = new ConcurrentHashMap<>();
 
+	private final ConcurrentMap<String, Object> locks = new ConcurrentHashMap<>();
+
 	private volatile BoardFile local;
 
 	private volatile long localStamp = Long.MIN_VALUE;
@@ -51,6 +57,33 @@ public class WorkspaceBoard {
 	public boolean pinnedClasspath() {
 		String location = location();
 		return location != null && location.startsWith("classpath:");
+	}
+
+	public void record(ProjectEntity project, String token, int number, String author, List<String> owners) {
+		if (pinnedClasspath() || project == null || number <= 0) {
+			return;
+		}
+		String creator = author == null ? null : author.strip();
+		if (creator != null && creator.isEmpty()) {
+			creator = null;
+		}
+		if (creator == null && owners == null) {
+			return;
+		}
+		Path file = boardPath(project, token);
+		synchronized (lock(file)) {
+			String current = readCurrent(project, token, file);
+			String next;
+			try {
+				next = BoardFile.withPeople(current, number, creator, owners);
+			}
+			catch (IllegalArgumentException exception) {
+				throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "工作目录里的 board.yaml 写不进创建人或负责人。");
+			}
+			write(file, next);
+			local = null;
+			localStamp = Long.MIN_VALUE;
+		}
 	}
 
 	public BoardFile structure(ProjectEntity project, String token) {
@@ -151,6 +184,59 @@ public class WorkspaceBoard {
 		catch (IOException exception) {
 			throw new IllegalStateException("board.yaml 没有读到", exception);
 		}
+	}
+
+	private Path boardPath(ProjectEntity project, String token) {
+		String location = location();
+		if (location == null) {
+			return workspaces.await(project, token).resolve(FILE);
+		}
+		String path = location.startsWith("file:") ? location.substring("file:".length()) : location;
+		return Path.of(path);
+	}
+
+	private String readCurrent(ProjectEntity project, String token, Path file) {
+		if (Files.isRegularFile(file)) {
+			try {
+				return Files.readString(file);
+			}
+			catch (IOException exception) {
+				throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "工作目录里的 board.yaml 没有读到。");
+			}
+		}
+		if (location() != null) {
+			return "";
+		}
+		try {
+			return gitlab.file(token, project.getGitHost(), project.getGitOwner(), project.getGitRepo(), FILE);
+		}
+		catch (GitlabIssueException exception) {
+			if (exception.status() == 404) {
+				return "";
+			}
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "工作目录里的 board.yaml 没有读到。");
+		}
+	}
+
+	private void write(Path file, String text) {
+		try {
+			Files.createDirectories(file.getParent());
+			Path temporary = Files.createTempFile(file.getParent(), ".board-", ".tmp");
+			Files.writeString(temporary, text);
+			try {
+				Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+			}
+			catch (IOException exception) {
+				Files.move(temporary, file, StandardCopyOption.REPLACE_EXISTING);
+			}
+		}
+		catch (IOException exception) {
+			throw new ResponseStatusException(HttpStatus.BAD_GATEWAY, "工作目录里的 board.yaml 没有写好。");
+		}
+	}
+
+	private Object lock(Path file) {
+		return locks.computeIfAbsent(file.toString(), key -> new Object());
 	}
 
 	private String location() {

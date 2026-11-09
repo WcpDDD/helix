@@ -20,6 +20,24 @@ class WorkerProcessTest {
 	}
 
 	@Test
+	void reloadsThroughTheBootLauncherWhenThatStartedTheJvm() {
+		String previous = System.getProperty("sun.java.command");
+		System.setProperty("sun.java.command", "org.springframework.boot.loader.launch.PropertiesLauncher");
+		try {
+			List<String> command = WorkerProcess.toolchainCommand(Path.of("/opt/helix/env.sh"));
+			assertThat(command).contains("org.springframework.boot.loader.launch.PropertiesLauncher");
+		}
+		finally {
+			if (previous == null) {
+				System.clearProperty("sun.java.command");
+			}
+			else {
+				System.setProperty("sun.java.command", previous);
+			}
+		}
+	}
+
+	@Test
 	void advertisesTheConfiguredAddressAndKeepsLoopbackForALocalWorker() {
 		assertThat(WorkerProcess.advertised("", 8091)).isEqualTo("http://127.0.0.1:8091");
 		assertThat(WorkerProcess.advertised("http://helix-worker.helix.svc.cluster.local:8091/", 8091))

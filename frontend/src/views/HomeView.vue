@@ -1,16 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, provide, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import TaskCreate from '@/components/TaskCreate.vue'
 import TaskDetail from '@/components/TaskDetail.vue'
 import TaskGantt from '@/components/TaskGantt.vue'
 import TaskNext from '@/components/TaskNext.vue'
+import OwnerEdit from '@/components/OwnerEdit.vue'
 import TaskPeople from '@/components/TaskPeople.vue'
 import { fetchTasks, scheduleRelease, transitionTask } from '@/api/client'
 import { useProjectStore } from '@/stores/projects'
 import { useSessionStore } from '@/stores/session'
-import { rememberPeople } from '@/data/people'
-import { applyTask } from '@/data/statusDraft'
+import { loadDirectory, rememberPeople } from '@/data/people'
+import { applyTask, editingOwnerId } from '@/data/statusDraft'
 import { taskTransitionKey } from '@/data/taskTransition'
 import { stageFilters, statusTone, type StageFilter, type Task, type TaskStage, type TaskStatus } from '@/data/tasks'
 
@@ -18,11 +19,17 @@ const taskViews = ['列表', '甘特', '我的'] as const
 type TaskView = (typeof taskViews)[number]
 
 const route = useRoute()
+const router = useRouter()
 const projects = useProjectStore()
 const session = useSessionStore()
 const filter = ref<StageFilter>('全部')
 const view = ref<TaskView>('列表')
-const selectedCode = ref<string | null>(typeof route.query.task === 'string' ? route.query.task : null)
+const selectedCode = computed(() => {
+  const param = route.params.code
+  if (typeof param === 'string' && param) return param
+  const query = route.query.task
+  return typeof query === 'string' && query ? query : null
+})
 const tasks = ref<Task[]>([])
 const ready = ref(false)
 const loadError = ref('')
@@ -33,35 +40,40 @@ const maintainer = computed(() => projects.access === 'maintainer')
 
 const board = computed(() => tasks.value.map(applyTask))
 
-provide(taskTransitionKey, async (code: string, status: TaskStatus, stage: TaskStage, releaseOn?: string | null) => {
-  const result = await transitionTask(code, status, stage, releaseOn)
+provide(taskTransitionKey, async (code: string, status: TaskStatus, stage: TaskStage, releaseOn?: string | null, owners?: string[]) => {
+  const result = await transitionTask(code, status, stage, releaseOn, owners)
   const task = tasks.value.find((item) => item.code === code)
   if (task) {
     task.status = result.status
     task.stage = result.stage
     if (result.releaseOn) task.releaseOn = result.releaseOn
+    if (owners && owners.length > 0 && result.synced) task.owners = owners
   }
   return result
 })
 
 watch(
   () => route.query.task,
-  (code) => {
-    if (typeof code === 'string' && code) selectedCode.value = code
+  (task) => {
+    if (typeof task !== 'string' || !task || route.params.code) return
+    void router.replace({ name: 'tasks', params: { code: task } })
   },
+  { immediate: true },
 )
 
 watch(
   () => projects.currentId,
   async (id) => {
+    editingOwnerId.value = null
     if (id == null) return
     ready.value = false
     loadError.value = ''
     try {
       tasks.value = await fetchTasks()
       rememberPeople(tasks.value)
+      void loadDirectory()
       if (selectedCode.value && !tasks.value.some((task) => task.code === selectedCode.value)) {
-        selectedCode.value = null
+        await router.replace('/tasks')
       }
     } catch (error) {
       tasks.value = []
@@ -98,19 +110,26 @@ function isMine(task: Task): boolean {
 }
 
 function open(task: Task) {
-  selectedCode.value = task.code
+  if (route.params.code === task.code) return
+  void router.push({ name: 'tasks', params: { code: task.code } })
+}
+
+function close() {
+  void router.push('/tasks')
 }
 
 async function created(code: string) {
   creating.value = false
   tasks.value = await fetchTasks()
   rememberPeople(tasks.value)
-  selectedCode.value = code
+  void loadDirectory()
+  void router.push({ name: 'tasks', params: { code } })
 }
 
 async function reloadBoard() {
   tasks.value = await fetchTasks()
   rememberPeople(tasks.value)
+  void loadDirectory()
 }
 
 let boardTimer = 0
@@ -181,6 +200,13 @@ async function saveRelease(task: Task, event: Event) {
 function rememberRelease(code: string, date: string) {
   const source = tasks.value.find((item) => item.code === code)
   if (source) source.releaseOn = date
+}
+
+function rememberOwners(code: string, owners: string[]) {
+  const source = tasks.value.find((item) => item.code === code)
+  if (!source) return
+  source.owners = owners
+  source.owner = owners[0] ?? ''
 }
 
 </script>
@@ -275,8 +301,8 @@ function rememberRelease(code: string, date: string) {
             <td class="creator">
               <TaskPeople part="creator" :creator="task.issue.author" />
             </td>
-            <td class="owners">
-              <TaskPeople part="owners" :owners="task.owners ?? []" />
+            <td class="owners" @click.stop>
+              <OwnerEdit :code="task.code" :owners="task.owners ?? []" @saved="rememberOwners(task.code, $event)" />
             </td>
             <td>
               <span class="marks">
@@ -330,7 +356,8 @@ function rememberRelease(code: string, date: string) {
           </span>
         </div>
         <p>{{ task.description }}</p>
-        <TaskPeople :creator="task.issue.author" :owners="task.owners ?? []" />
+        <TaskPeople part="creator" labeled :creator="task.issue.author" />
+        <OwnerEdit labeled :code="task.code" :owners="task.owners ?? []" @saved="rememberOwners(task.code, $event)" />
         <div class="card-actions">
           <TaskNext :task="task" variant="row" />
         </div>
@@ -374,9 +401,10 @@ function rememberRelease(code: string, date: string) {
         :key="selected.code"
         :task="selected"
         :can-edit-release="canSchedule(selected)"
-        @close="selectedCode = null"
+        @close="close"
         @refresh="reloadBoard"
         @release="rememberRelease(selected.code, $event)"
+        @owners="rememberOwners(selected.code, $event)"
       />
     </div>
 

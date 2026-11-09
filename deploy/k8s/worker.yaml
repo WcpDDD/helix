@@ -32,7 +32,7 @@ spec:
         - name: harbor-secret
       initContainers:
         - name: prepare
-          image: harbor.oalite.com/devops/helix-worker:20261103-1
+          image: harbor.oalite.com/devops/helix-worker:20261105-1
           imagePullPolicy: IfNotPresent
           command: ["sh", "-c", "mkdir -p /var/helix/workers /var/helix/agentkit/worker"]
           volumeMounts:
@@ -40,7 +40,7 @@ spec:
               mountPath: /var/helix
       containers:
         - name: worker
-          image: harbor.oalite.com/devops/helix-worker:20261103-1
+          image: harbor.oalite.com/devops/helix-worker:20261105-1
           imagePullPolicy: IfNotPresent
           envFrom:
             - configMapRef:
@@ -58,6 +58,14 @@ spec:
               value: ""
             - name: NO_PROXY
               value: .oalite.com,.svc,.cluster.local,localhost,127.0.0.1,docker.gitlab-runner
+            - name: KUBECONFIG
+              value: /root/.kube/config
+            - name: JAVA8_HOME
+              value: /usr/lib/jvm/java-8-amazon-corretto
+            - name: JAVA21_HOME
+              value: /opt/jdk-21
+            - name: JAVA_HOME
+              value: /opt/jdk-21
           startupProbe:
             tcpSocket:
               port: 8091
@@ -73,14 +81,22 @@ spec:
               memory: 1Gi
             limits:
               cpu: "2"
-              memory: 4Gi
+              memory: 8Gi
           volumeMounts:
             - name: data
               mountPath: /var/helix
             - name: data
               mountPath: /root/.agentkit
               subPath: agentkit/worker
+            - name: kube
+              mountPath: /root/.kube/config
+              subPath: config
+              readOnly: true
       volumes:
         - name: data
           persistentVolumeClaim:
             claimName: helix-data
+        - name: kube
+          secret:
+            secretName: helix-kube
+            defaultMode: 0600

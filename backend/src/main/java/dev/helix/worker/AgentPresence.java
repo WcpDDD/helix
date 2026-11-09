@@ -3,6 +3,7 @@ package dev.helix.worker;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
@@ -48,6 +49,19 @@ public class AgentPresence {
 		byWorker.put(workerId.strip(), next);
 	}
 
+	public List<Sight> sights() {
+		Instant now = clock.instant();
+		List<Sight> found = new ArrayList<>();
+		for (var entry : byWorker.entrySet()) {
+			for (Run run : entry.getValue().values()) {
+				if (run.until().isAfter(now)) {
+					found.add(new Sight(entry.getKey(), run.issue(), run.agent(), run.until()));
+				}
+			}
+		}
+		return List.copyOf(found);
+	}
+
 	public Optional<Run> running(int issue) {
 		Instant now = clock.instant();
 		for (ConcurrentHashMap<String, Run> runs : byWorker.values()) {
@@ -64,6 +78,9 @@ public class AgentPresence {
 	}
 
 	public record Run(int issue, String agent, Instant until) {
+	}
+
+	public record Sight(String workerId, int issue, String agent, Instant until) {
 	}
 
 }

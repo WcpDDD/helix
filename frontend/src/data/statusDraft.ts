@@ -1,15 +1,18 @@
-import { reactive, ref } from 'vue'
+import { ref } from 'vue'
 import type { Task } from '@/data/tasks'
-
-const owners = reactive<Record<string, string[]>>({})
 
 export const pendingIssueId = ref<string | null>(null)
 
-export function rememberOwners(id: string, names: string[]) {
-  owners[id] = names
+export const editingOwnerId = ref<number | null>(null)
+
+let ownerEditorSerial = 0
+
+export function nextOwnerEditorId(): number {
+  ownerEditorSerial += 1
+  return ownerEditorSerial
 }
 
 export function applyTask(task: Task): Task {
-  const next = owners[task.code] ?? (task.owner ? [task.owner] : [])
-  return { ...task, owners: next }
+  if (task.owners) return task
+  return { ...task, owners: task.owner ? [task.owner] : [] }
 }
