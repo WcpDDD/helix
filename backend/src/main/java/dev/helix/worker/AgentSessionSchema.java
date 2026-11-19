@@ -33,12 +33,13 @@ public class AgentSessionSchema implements ApplicationRunner {
 			long assigned = name.isBlank() && !taken(projectId, issue, 0) ? 0 : nextId();
 			jdbc.update("UPDATE agent_session SET agent_id = ? WHERE id = ?", assigned, id);
 		}
+		dedupeByName();
 		List<Map<String, Object>> indexes = jdbc.queryForList(
 				"SELECT name, sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'agent_session'");
 		for (Map<String, Object> index : indexes) {
 			String sql = index.get("sql") == null ? "" : index.get("sql").toString();
 			String name = index.get("name") == null ? "" : index.get("name").toString();
-			if (name.isBlank() || sql.contains("agent_id")) {
+			if (name.isBlank() || sql.contains("agent_id") || sql.contains("agent_name")) {
 				continue;
 			}
 			if (sql.contains("issue_number")) {
@@ -49,6 +50,29 @@ public class AgentSessionSchema implements ApplicationRunner {
 				CREATE UNIQUE INDEX IF NOT EXISTS agent_session_issue_agent
 				ON agent_session(project_id, issue_number, agent_id)
 				""");
+		jdbc.execute("""
+				CREATE UNIQUE INDEX IF NOT EXISTS agent_session_issue_agent_name
+				ON agent_session(project_id, issue_number, agent_name)
+				""");
+	}
+
+	private void dedupeByName() {
+		List<Map<String, Object>> dupes = jdbc.queryForList("""
+				SELECT project_id, issue_number, agent_name, MIN(id) AS keep_id
+				FROM agent_session
+				GROUP BY project_id, issue_number, agent_name
+				HAVING COUNT(*) > 1
+				""");
+		for (Map<String, Object> dupe : dupes) {
+			long keepId = ((Number) dupe.get("keep_id")).longValue();
+			long projectId = ((Number) dupe.get("project_id")).longValue();
+			int issue = ((Number) dupe.get("issue_number")).intValue();
+			String name = dupe.get("agent_name") == null ? "" : dupe.get("agent_name").toString();
+			jdbc.update("""
+					DELETE FROM agent_session
+					WHERE project_id = ? AND issue_number = ? AND agent_name = ? AND id <> ?
+					""", projectId, issue, name, keepId);
+		}
 	}
 
 	private boolean taken(long projectId, int issue, long agentId) {

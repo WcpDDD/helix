@@ -22,6 +22,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.data.domain.Sort;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -55,20 +56,72 @@ class AgentSessionApiTest {
 	@Autowired
 	private AgentRepository agents;
 
+	@Autowired
+	private JdbcTemplate jdbc;
+
 	@AfterEach
 	void cleanup() {
 		issues.findByGitIssueNumber(22).ifPresent(issue -> routes.deleteById(issue.getId()));
 		workers.deleteById("worker-session");
 		sessions.findAll().stream()
 				.filter(item -> item.getIssueNumber() == 880010 || item.getIssueNumber() == 880011
-						|| item.getIssueNumber() == 880012 || item.getIssueNumber() == 880030)
+						|| item.getIssueNumber() == 880012 || item.getIssueNumber() == 880030
+						|| item.getIssueNumber() == 880263)
 				.forEach(sessions::delete);
 		agents.findAll().stream()
-				.filter(agent -> "guide-proposal".equals(agent.getName()) || "guide-review".equals(agent.getName()))
+				.filter(agent -> "guide-proposal".equals(agent.getName()) || "guide-review".equals(agent.getName())
+						|| "dup-manager".equals(agent.getName()))
 				.forEach(agents::delete);
 		workers.deleteById("worker-idle");
 		workers.deleteById("worker-busy");
 		workers.deleteById("worker-fail");
+		workers.deleteById("worker-dup");
+	}
+
+	@Test
+	void duplicateNamedSessionsDoNotBreakRosterOrCreate() throws Exception {
+		retireWorkers();
+		HttpServer server = server(200, new AtomicInteger(), new AtomicReference<>());
+		server.start();
+		try {
+			heartbeat("worker-dup", "去重机", server.getAddress().getPort());
+			var project = projects.findAll(Sort.by("id")).getFirst();
+			long projectId = project.getId();
+			AgentEntity manager = new AgentEntity(project, "dup-manager", "调度");
+			manager.retag("manager");
+			agents.save(manager);
+			AgentSessionEntity first = sessions.save(new AgentSessionEntity(projectId, 880263, manager.getName(), "worker-dup"));
+			jdbc.execute("DROP INDEX IF EXISTS agent_session_issue_agent_name");
+			Long maxAgentId = jdbc.queryForObject("SELECT COALESCE(MAX(agent_id), 0) FROM agent_session", Long.class);
+			jdbc.update("""
+					INSERT INTO agent_session(project_id, issue_number, agent_id, agent_name, worker_id)
+					VALUES (?, ?, ?, ?, ?)
+					""", projectId, 880263, (maxAgentId == null ? 1 : maxAgentId + 1), manager.getName(), "worker-dup");
+			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentNameOrderByIdAsc(projectId, 880263, manager.getName()))
+					.hasSizeGreaterThanOrEqualTo(2);
+
+			mockMvc.perform(get("/api/issues/880263/agent-sessions"))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$[?(@.name=='dup-manager')].assigned").value(org.hamcrest.Matchers.contains(true)));
+
+			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentNameOrderByIdAsc(projectId, 880263, manager.getName()))
+					.hasSize(1)
+					.first()
+					.extracting(AgentSessionEntity::getId)
+					.isEqualTo(first.getId());
+
+			mockMvc.perform(post("/api/issues/880263/agents/dup-manager/session"))
+					.andExpect(status().isOk())
+					.andExpect(jsonPath("$.assigned").value(true))
+					.andExpect(jsonPath("$.workerId").value("worker-dup"));
+		}
+		finally {
+			server.stop(0);
+			jdbc.execute("""
+					CREATE UNIQUE INDEX IF NOT EXISTS agent_session_issue_agent_name
+					ON agent_session(project_id, issue_number, agent_name)
+					""");
+		}
 	}
 
 	@Test
@@ -215,7 +268,8 @@ class AgentSessionApiTest {
 					.contains("初始化这张提案")
 					.contains("\"agentBody\":\"身份\"")
 					.contains("skills/dev-flow/SKILL.md");
-			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentName(projectId, 880030, proposal.getName())).isPresent();
+			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentNameOrderByIdAsc(projectId, 880030, proposal.getName()))
+					.hasSize(1);
 
 			AgentEntity review = new AgentEntity(projects.findAll(Sort.by("id")).getFirst(), "guide-review", "审提案");
 			review.retag("proposal-review");
@@ -228,7 +282,8 @@ class AgentSessionApiTest {
 			assertThat(seen.get()).contains("POST /sessions/880030/messages?agent=" + review.getName())
 					.contains("审这张提案")
 					.doesNotContain("状态改为");
-			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentName(projectId, 880030, review.getName())).isPresent();
+			assertThat(sessions.findByProjectIdAndIssueNumberAndAgentNameOrderByIdAsc(projectId, 880030, review.getName()))
+					.hasSize(1);
 
 			mockMvc.perform(get("/api/workers/worker-guide/issues/880030/agents/proposal/conversations"))
 					.andExpect(status().isOk())
