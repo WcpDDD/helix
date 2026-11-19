@@ -9,7 +9,10 @@ import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
 @Entity
-@Table(name = "agent_session", uniqueConstraints = @UniqueConstraint(columnNames = { "project_id", "issue_number", "agent_id" }))
+@Table(name = "agent_session", uniqueConstraints = {
+		@UniqueConstraint(columnNames = { "project_id", "issue_number", "agent_id" }),
+		@UniqueConstraint(columnNames = { "project_id", "issue_number", "agent_name" })
+})
 public class AgentSessionEntity {
 
 	@Id

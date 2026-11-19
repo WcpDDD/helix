@@ -364,11 +364,22 @@ public class AgentSessionService {
 
 	private java.util.Optional<AgentSessionEntity> stored(long projectId, int number, String agentName) {
 		String key = agentName == null ? "" : agentName;
-		java.util.Optional<AgentSessionEntity> named = sessions.findByProjectIdAndIssueNumberAndAgentName(projectId, number, key);
-		if (named.isPresent() || !key.isEmpty()) {
-			return named;
+		List<AgentSessionEntity> named = sessions.findByProjectIdAndIssueNumberAndAgentNameOrderByIdAsc(projectId, number, key);
+		if (!named.isEmpty()) {
+			return java.util.Optional.of(keepOldest(named));
+		}
+		if (!key.isEmpty()) {
+			return java.util.Optional.empty();
 		}
 		return sessions.findByProjectIdAndIssueNumberAndAgentId(projectId, number, 0);
+	}
+
+	private AgentSessionEntity keepOldest(List<AgentSessionEntity> rows) {
+		AgentSessionEntity keep = rows.getFirst();
+		for (int index = 1; index < rows.size(); index++) {
+			sessions.delete(rows.get(index));
+		}
+		return keep;
 	}
 
 	private CallableWorker require(long projectId, int number, String agentName) {
